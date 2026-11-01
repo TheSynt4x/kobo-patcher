@@ -273,7 +273,9 @@ def download(url, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     print(f"downloading {url}")
     partial = path.with_name(path.name + ".part")
-    with urllib.request.urlopen(url) as response, partial.open("wb") as out:
+    # Kobo's server refuses Python's default user agent.
+    request = urllib.request.Request(url, headers={"User-Agent": "kobo-patcher"})
+    with urllib.request.urlopen(request) as response, partial.open("wb") as out:
         while chunk := response.read(1 << 20):
             out.write(chunk)
     partial.rename(path)
