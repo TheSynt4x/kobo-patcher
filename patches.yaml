@@ -1,0 +1,138 @@
+# Every compiled patch, and the firmware they're built for. After changing this file run
+# `make patches`, which writes web/patches/ for the page. Add new patches and firmware here.
+#
+# A firmware needs its model, version and download link. The hashes are worked out for you.
+#
+# A patch has an id, title and description, optionally a warning, and a group where only one
+# in the group can be chosen. It sits in `file`, and its edits are one of these:
+#   community     the title of a patch in kobopatch-patches
+#   steps         edits that fit every firmware
+#   per_firmware  edits written for each firmware, usually from reading its code
+
+community_patches:
+  ref: 840b2a3a462dbfdf53112e142c3b6df0be3e84ae
+  version: "4.39.22801"
+
+firmware:
+  - model: N306
+    firmware: "4.38.23852"
+    url: https://ereaderfiles.kobo.com/firmwares/kobo7/Oct2026/kobo-update-4.38.23852.zip
+  - model: N428
+    firmware: "4.46.23852"
+    url: https://ereaderfiles.kobo.com/firmwares/kobo13/Oct2026/kobo-update-4.46.23852.zip
+
+patches:
+  - id: upgrade-confirmation
+    title: Ask before firmware updates
+    description: Always shows Kobo's confirmation before an update, so a silent update can't remove these patches.
+    file: libnickel.so.1.0.0
+    community: Always show confirmation dialog before upgrading
+
+  - id: margins
+    title: Finer margins
+    description: Makes the margin slider go up in smaller steps, from 0 to 8% of the screen width.
+    file: libnickel.so.1.0.0
+    community: Custom left & right margins
+
+  - id: font-sizes
+    title: More small font sizes
+    description: Adds finer steps at small sizes. The largest sizes go away, so skip this if you read very large text.
+    file: libnickel.so.1.0.0
+    community: Custom font sizes
+
+  - id: line-spacing
+    title: Narrower line spacing
+    description: Replaces the line spacing slider with 10 values from 0.8 to 1.1, instead of 15 that go much wider.
+    file: libnickel.so.1.0.0
+    community: My 10 line spacing values
+
+  - id: no-recommendations
+    title: No recommendations on the home screen
+    description: Hides the recommendations column that shows when fewer than 2 books are open.
+    file: libnickel.so.1.0.0
+    community: Remove recommendations (row1col2) from home screen
+
+  # The Kobo Plus part of "Never show Kobo Plus, wishlist, and points SmartLinks". The full
+  # patch no longer fits: the wishlist's number has since changed.
+  - id: no-kobo-plus
+    title: No Kobo Plus suggestion on the home screen
+    description: Stops the home screen's rotating suggestion links from offering Kobo Plus.
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "ActivityManager::smartLinkGeneralMessage(Device const&)"
+      - ReplaceBytes: {Offset: 310, FindH: "02 23", CheckOnly: true}  # movs r3, #2
+      - ReplaceBytes:
+          Offset: 320
+          ReplaceInstNOP: true
+          FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}
+
+  # MainNavView::updateVisibleButtons decides which bottom bar buttons show. These make the
+  # setVisible call for the discover button, the fifth button setupUi creates, always get false.
+  - id: no-discover
+    title: No Discover button
+    description: Hides Discover, with Kobo Plus and the store, from the bottom bar. Your books and Google Drive stay.
+    file: libnickel.so.1.0.0
+    per_firmware:
+      "4.46.23852":
+        - BaseAddress: MainNavView::updateVisibleButtons()
+        - ReplaceBytes: {Offset: 0xDE, FindH: "D2F818A0", CheckOnly: true}  # ldr.w sl, [r2, #0x18]
+        - ReplaceBytes: {Offset: 0xF6, FindH: "0121", ReplaceH: "0021"}  # movs r1, #1 -> #0
+      "4.38.23852":
+        - BaseAddress: MainNavView::updateVisibleButtons()
+        - ReplaceBytes: {Offset: 0xBE, FindH: "D869", CheckOnly: true}  # ldr r0, [r3, #0x1c]
+        - ReplaceBytes: {Offset: 0xC4, FindH: "09EA0101", ReplaceH: "002100BF"}  # and.w r1 -> movs r1, #0
+
+  # MoreView::updateVisibleButtons, the same for the More page. Ui_MoreView::setupUi stores
+  # wishlistButton at 0x10 and articlesButton at 0x20, and these make their setVisible get false.
+  - id: no-more-extras
+    title: No My Wishlist or My Articles
+    description: Hides both from the More page. Everything else on that page stays.
+    file: libnickel.so.1.0.0
+    per_firmware:
+      "4.46.23852":
+        - BaseAddress: MoreView::updateVisibleButtons()
+        - ReplaceBytes: {Offset: 0x144, FindH: "186A", CheckOnly: true}  # ldr r0, [r3, #0x20]
+        - ReplaceBytes: {Offset: 0x142, FindH: "5946", ReplaceH: "0021"}  # mov r1, fp -> movs r1, #0
+        - ReplaceBytes: {Offset: 0x2D8, FindH: "1869", CheckOnly: true}  # ldr r0, [r3, #0x10]
+        - ReplaceBytes: {Offset: 0x2D6, FindH: "4146", ReplaceH: "0021"}  # mov r1, r8 -> movs r1, #0
+      "4.38.23852":
+        - BaseAddress: MoreView::updateVisibleButtons()
+        - ReplaceBytes: {Offset: 0x144, FindH: "186A", CheckOnly: true}  # ldr r0, [r3, #0x20]
+        - ReplaceBytes: {Offset: 0x142, FindH: "5946", ReplaceH: "0021"}  # mov r1, fp -> movs r1, #0
+        - ReplaceBytes: {Offset: 0x2CC, FindH: "1869", CheckOnly: true}  # ldr r0, [r3, #0x10]
+        - ReplaceBytes: {Offset: 0x2CA, FindH: "4146", ReplaceH: "0021"}  # mov r1, r8 -> movs r1, #0
+
+  - id: usb-when-locked
+    title: USB drive even when locked
+    description: Lets a locked Kobo connect as a USB drive if it's plugged in while the sleep screen is showing.
+    warning: This makes the lock screen PIN useless for protecting your books and sign-ins.
+    file: libnickel.so.1.0.0
+    community: Allow USB storage even when device locked
+
+  # These two change the same home screen styles, so only one can be chosen. The footer-only
+  # community patch doesn't fit: its result comes out 3 bytes too big for the firmware's space.
+  - id: home-covers
+    title: Larger home screen covers
+    description: Reduces the home screen's margins so covers can be bigger.
+    group: home-layout
+    file: nickel
+    community: Increase home screen cover size
+
+  - id: no-home-footer-covers
+    title: No Kobo Plus footer, and larger home screen covers
+    description: Removes the row that says "Find your next book in Kobo Plus or our store", and makes covers bigger.
+    group: home-layout
+    file: nickel
+    community: Remove footer (row3) and increase cover size on new home screen
+
+  - id: library-covers
+    title: Larger library covers
+    description: Increases the cover thumbnails in the My Books list.
+    file: nickel
+    community: Increase library cover size
+
+  - id: dictionary-area
+    title: More room in the dictionary pop-up
+    description: Trims the pop-up's header, footer and margins to leave more space for definitions.
+    file: nickel
+    community: Dictionary pop-up - increase available text area

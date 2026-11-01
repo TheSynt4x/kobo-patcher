@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kobo Patcher</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f4ef; --card: #fffdf9; --text: #24211c; --muted: #6d675c; --line: #ddd7cb;
+    --accent: #8a3b12; --accent-text: #fff; --good: #2f6b3a; --bad: #a12c22; --drop: #f0ebe0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #191714; --card: #23201b; --text: #efeae0; --muted: #a59e90; --line: #3b362e;
+      --accent: #e39a68; --accent-text: #24150b; --good: #84c592; --bad: #f08a7e; --drop: #2c2822;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 620px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { margin: 0; font-size: 28px; line-height: 1.2; }
+  .lead { margin: 8px 0 24px; color: var(--muted); }
+  .notice { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--bad); border-radius: 8px; color: var(--bad); }
+  section {
+    margin-bottom: 12px; padding: 18px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  section.locked { opacity: .5; }
+  h2 { display: flex; gap: 10px; align-items: baseline; margin: 0 0 12px; font-size: 17px; }
+  h2 span { color: var(--muted); font-variant-numeric: tabular-nums; }
+  p { margin: 0 0 12px; }
+  p:last-child { margin-bottom: 0; }
+  .drop {
+    display: block; padding: 28px 16px; text-align: center; cursor: pointer;
+    background: var(--drop); border: 1px dashed var(--muted); border-radius: 8px;
+  }
+  .drop.over { border-color: var(--accent); border-style: solid; }
+  .drop small { display: block; margin-top: 4px; color: var(--muted); overflow-wrap: anywhere; }
+  .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .patch { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+  .patch input { margin: 5px 0 0; width: 16px; height: 16px; accent-color: var(--accent); }
+  .patch strong { display: block; font-weight: 600; }
+  .patch small { color: var(--muted); font-size: 14px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer;
+    color: var(--text); background: transparent; border: 1px solid var(--muted); border-radius: 7px;
+  }
+  button.primary { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { min-height: 0; margin: 12px 0 0; font-size: 15px; overflow-wrap: anywhere; }
+  .status:empty { display: none; }
+  .status.good { color: var(--good); }
+  .status.bad { color: var(--bad); }
+  h2 .help { align-self: center; width: 24px; height: 24px; padding: 0; font-size: 14px; border-radius: 50%; }
+  dialog {
+    width: min(520px, calc(100vw - 32px)); padding: 20px; color: var(--text);
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  }
+  dialog::backdrop { background: rgb(0 0 0 / .5); }
+  dialog h3 { margin: 16px 0 4px; font-size: 15px; }
+  dialog h2 { margin-bottom: 4px; }
+  dialog ul { margin: 0 0 8px; padding-left: 20px; }
+  dialog a { color: var(--accent); }
+  dialog form { margin-top: 16px; text-align: right; }
+  .find { margin: 0 0 12px; font-size: 15px; }
+  .find:empty { display: none; }
+  .find a { color: var(--accent); }
+  .patch + .patch { margin-top: 14px; }
+  .addon { margin: 8px 0 0 26px; }
+  .addon input { max-width: 100%; font-size: 14px; }
+  .addon a { color: var(--accent); }
+  .addon .status { margin-top: 4px; font-size: 14px; }
+  .warning { display: block; margin-top: 2px; color: var(--bad); font-size: 14px; }
+  .fine { margin-top: 20px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kobo Patcher</h1>
+  <p class="lead">Patches your Kobo with its official firmware file. Everything runs in this browser tab, and nothing is uploaded.</p>
+  <p class="notice" id="browser-notice" hidden>This browser can't write to a Kobo. Open this page in Chrome or Edge on a computer.</p>
+
+  <section id="step-kobo">
+    <h2><span>1</span>Connect your Kobo
+      <button id="help" class="help" type="button" aria-label="Supported versions" title="Supported versions">?</button>
+    </h2>
+    <p>Plug it in, tap <strong>Connect</strong> on the Kobo, then select the KOBOeReader drive. The page reads its model and firmware version from there.</p>
+    <div class="actions">
+      <button id="connect" class="primary">Select Kobo</button>
+      <button id="backup" disabled>Back up everything</button>
+    </div>
+    <p class="status" id="kobo-status" role="status"></p>
+    <p class="status" id="backup-status" role="status"></p>
+  </section>
+
+  <section id="step-patches" class="locked">
+    <h2><span>2</span>Patches</h2>
+    <div id="patches"></div>
+  </section>
+
+  <section id="step-firmware" class="locked">
+    <h2><span>3</span>Firmware file</h2>
+    <p class="find" id="firmware-links"></p>
+    <label class="drop" id="drop">
+      <input type="file" id="firmware" accept=".zip" disabled>
+      Drop the firmware zip here, or click to choose it
+      <small>Don't unzip it or copy it to your Kobo. The page only reads it.</small>
+    </label>
+    <p class="status" id="firmware-status" role="status"></p>
+  </section>
+
+  <section id="step-run" class="locked">
+    <h2><span>4</span>Patch</h2>
+    <div class="actions">
+      <button id="patch" class="primary" disabled>Patch</button>
+      <button id="undo" disabled>Undo</button>
+    </div>
+    <p class="status" id="run-status" role="status"></p>
+  </section>
+
+  <p class="fine">Other models and firmware are refused. Patching system files can leave a Kobo needing a factory reset, so use this at your own risk. A firmware update removes the patch, so patch again afterwards with the new firmware file. Community patches come from <a href="https://github.com/pgaskin/kobopatch-patches" target="_blank" rel="noopener">kobopatch-patches</a> (MIT licence) and its contributors. This page isn't affiliated with Kobo and comes with no warranty. <a href="https://github.com/TheSynt4x/kobo-patcher" target="_blank" rel="noopener">Source code and credits</a> (MIT licence).</p>
+</main>
+<dialog id="supported" aria-labelledby="supported-title">
+  <h2 id="supported-title">Supported versions</h2>
+  <div id="supported-list"></div>
+  <form method="dialog"><button class="primary" autofocus>Close</button></form>
+</dialog>
+<script type="module" src="app.js"></script>
+</body>
+</html>
