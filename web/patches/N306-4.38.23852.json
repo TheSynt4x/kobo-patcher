@@ -13,6 +13,14 @@
    "replace": "4ff00000"
   }
  ],
+ "block-updates": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 10830448,
+   "find": "0068",
+   "replace": "0020"
+  }
+ ],
  "margins": [
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",

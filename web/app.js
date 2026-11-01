@@ -263,7 +263,7 @@ async function selectKobo() {
     }
     try {
       const kobo = await inspectKobo(root);
-      const response = await fetch(new URL(`patches/${kobo.model}-${kobo.firmware}.json`, import.meta.url));
+      const response = await fetch(new URL(`patches/${kobo.model}-${kobo.firmware}.json`, import.meta.url), { cache: "no-cache" });
       if (!response.ok) throw new Refused("this page couldn't load its patch list. Reload and try again");
       const edits = await response.json();
       Object.assign(state, { root, kobo, edits, items: registryFor(kobo.model, kobo.firmware) });

@@ -34,6 +34,16 @@ patches:
     file: libnickel.so.1.0.0
     community: Always show confirmation dialog before upgrading
 
+  # Nickel checks this value in every update path, and 0 means it's up to date. Sync carries on as usual.
+  - id: block-updates
+    title: Block firmware updates
+    description: Kobo always reports it's up to date, so an update can't remove these patches. Wi-Fi and sync aren't affected.
+    warning: You won't get security fixes or new features until you remove this patch.
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "UpgradeCheckResult::getUpgradeType() const"
+      - ReplaceBytes: {Offset: 0x4, FindH: "0068", ReplaceH: "0020"}  # ldr r0, [r0] -> movs r0, #0
+
   - id: margins
     title: Finer margins
     description: Makes the margin slider go up in smaller steps, from 0 to 8% of the screen width.

@@ -39,6 +39,22 @@ export const COMPILED_PATCHES = [
     }
   },
   {
+    "id": "block-updates",
+    "kind": "patch",
+    "title": "Block firmware updates",
+    "description": "Kobo always reports it's up to date, so an update can't remove these patches. Wi-Fi and sync aren't affected.",
+    "warning": "You won't get security fixes or new features until you remove this patch.",
+    "needsFirmware": true,
+    "targets": {
+      "N306": [
+        "4.38.23852"
+      ],
+      "N428": [
+        "4.46.23852"
+      ]
+    }
+  },
+  {
     "id": "margins",
     "kind": "patch",
     "title": "Finer margins",
