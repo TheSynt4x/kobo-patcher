@@ -1,0 +1,62 @@
+/* A small kit for adding to Kobo's UI with Kobo's own widgets, so new things look like they
+ * belong. It needs no Qt headers or Qt build: everything is looked up by name at runtime, and a
+ * mod that can't find what it needs on this firmware stays out of the way. */
+#ifndef NK_H
+#define NK_H
+
+typedef struct NkScreen NkScreen;
+typedef void (*NkFn)(void *arg);
+
+/* Each mod defines this. It runs once, when Nickel loads the mod, before any UI exists. */
+void nk_mod_init(void);
+
+/* Log to stderr, prefixed with the mod's name. */
+void nk_log(const char *fmt, ...);
+
+/* Look up a symbol. Failing lookups are logged and return 0. nk_ok() is false once any has failed. */
+void *nk_sym(const char *name);
+int nk_ok(void);
+
+/* Replace a function that libnickel calls. Returns the original, or 0 if it can't. */
+void *nk_hook(const char *symbol, void *replacement);
+
+/* Add a row to the More page above Settings, with a PNG icon built into the mod. Tapping it runs
+ * open(arg). Call from nk_mod_init. If this firmware lacks anything the kit needs, there's no row. */
+void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg);
+
+/* Open a settings-style screen. build(screen, arg) fills it in when it opens; pages and the close
+ * button come with the screen. */
+void nk_open_screen(const char *title, const char *small_title, void (*build)(NkScreen *, void *), void *arg);
+
+/* The grey section heading, as in Beta Features. */
+void nk_section(NkScreen *s, const char *title);
+
+/* A line of text. */
+void nk_text(NkScreen *s, const char *text);
+
+/* A row with a title on the left and italic text on the right. */
+void nk_value_row(NkScreen *s, const char *title, const char *value);
+
+/* A row with a title and Kobo's "On" tick box. changed(arg) runs whenever it's ticked or unticked,
+ * including by nk_toggle_set. */
+typedef struct NkToggle NkToggle;
+NkToggle *nk_toggle_row(NkScreen *s, const char *title, int on, NkFn changed, void *arg);
+int nk_toggle_on(NkToggle *toggle);
+void nk_toggle_set(NkToggle *toggle, int on);
+
+/* A row with a title and an italic button, like Beta Features' "Start". Returns the title, so it
+ * can be changed with nk_label_set. */
+typedef struct NkLabel NkLabel;
+NkLabel *nk_button_row(NkScreen *s, const char *title, const char *button, NkFn tapped, void *arg);
+void nk_label_set(NkLabel *label, const char *text);
+
+/* Kobo's dialog with two buttons. One of the functions runs when it's answered; either can be 0. */
+void nk_confirm(const char *title, const char *text, const char *accept, const char *reject, NkFn accepted, NkFn rejected, void *arg);
+
+/* Kobo's error dialog. */
+void nk_error(const char *title, const char *text);
+
+/* Restart the Kobo the way Kobo does. */
+void nk_reboot(void);
+
+#endif
