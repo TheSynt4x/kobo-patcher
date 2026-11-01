@@ -6,8 +6,14 @@ const NICKEL_PATH = "./usr/local/Kobo/libnickel.so.1.0.0";
 const NICKEL_BIN_PATH = "./usr/local/Kobo/nickel";
 const RECORD = "kobo-patcher.json";
 const DRIVE_CHECK = "_ZNK6Device19supportsGoogleDriveEv";
-const DRIVE_CHECK_START = [0x98, 0xb5, 0x01, 0x21, 0x00, 0xaf];
-const DRIVE_CHECK_TRUE = [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]; // push {lr}; movs r0,#1; pop {pc}
+const DROPBOX_CHECK = "_ZNK6Device15supportsDropboxEv";
+const CHECK_START = [0x98, 0xb5, 0x01, 0x21, 0x00, 0xaf];
+const CHECK_TRUE = [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]; // push {lr}; movs r0,#1; pop {pc}
+const DROPBOX_SETTINGS = [
+  ["FeatureSettings", "Dropbox", "1"],
+  ["OneStoreServices", "kobo_dropbox_link_account_enabled", "True"],
+  ["OneStoreServices", "dropbox_link_account_poll", "https://authorize.kobo.com/{region}/{language}/LinkDropbox"],
+];
 const DRIVE_SETTINGS = [
   ["FeatureSettings", "GoogleDrive", "1"],
   ["OneStoreServices", "kobo_googledrive_link_account_enabled", "True"],
@@ -23,7 +29,10 @@ export const SUPPORTED = Object.fromEntries(
 
 const KOREADER_MENU = "menu_item:main:KOReader:cmd_spawn:quiet:exec /mnt/onboard/.adds/koreader/koreader.sh\n";
 
-const PATCH_CODE = { "google-drive": { apply: patchDriveCheck, settings: DRIVE_SETTINGS } };
+const PATCH_CODE = {
+  "google-drive": { apply: patchDriveCheck, settings: DRIVE_SETTINGS },
+  dropbox: { apply: patchDropboxCheck, settings: DROPBOX_SETTINGS },
+};
 
 export const PATCHES = REGISTRY.filter((item) => item.kind === "patch")
   .map((item) => ({ settings: [], ...item, ...PATCH_CODE[item.id] }));
@@ -252,16 +261,24 @@ export function functionOffset(elf, name) {
   return null;
 }
 
-// Make the device-model check for Google Drive return true. Refuses code it doesn't know.
-export function patchDriveCheck(nickel) {
-  const offset = functionOffset(nickel, DRIVE_CHECK);
-  if (offset === null) throw new Refused("this firmware has no Google Drive device check to patch");
-  if (!DRIVE_CHECK_START.every((b, i) => nickel[offset + i] === b)) {
-    throw new Refused("the Google Drive check has changed in this firmware, so it needs a new patch");
+// Make a device-model check return true. Refuses code it doesn't know.
+function patchCheck(nickel, symbol, name) {
+  const offset = functionOffset(nickel, symbol);
+  if (offset === null) throw new Refused(`this firmware has no ${name} device check to patch`);
+  if (!CHECK_START.every((b, i) => nickel[offset + i] === b)) {
+    throw new Refused(`the ${name} check has changed in this firmware, so it needs a new patch`);
   }
   const out = nickel.slice();
-  out.set(DRIVE_CHECK_TRUE, offset);
+  out.set(CHECK_TRUE, offset);
   return out;
+}
+
+export function patchDriveCheck(nickel) {
+  return patchCheck(nickel, DRIVE_CHECK, "Google Drive");
+}
+
+export function patchDropboxCheck(nickel) {
+  return patchCheck(nickel, DROPBOX_CHECK, "Dropbox");
 }
 
 // Set key=value in an INI-style section, keeping the file's other lines.

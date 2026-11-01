@@ -3,7 +3,7 @@
 #
 # A firmware needs its model code (the first 4 characters of the serial in .kobo/version), the
 # model's name, its version and its download link. The hashes are worked out for you. Set
-# google_drive to offer the Drive patch there, once you've tested it, because it isn't compiled.
+# google_drive or dropbox to offer that patch there, once you've tested it, because they aren't compiled.
 #
 # A patch has an id, title and description, optionally a warning, and a group where only one
 # in the group can be chosen. It sits in `file`, and its edits are one of these:
@@ -21,6 +21,7 @@ firmware:
     firmware: "4.38.23852"
     url: https://ereaderfiles.kobo.com/firmwares/kobo7/Oct2026/kobo-update-4.38.23852.zip
     google_drive: true
+    dropbox: true
   - model: N428
     name: Kobo Libra Colour
     firmware: "4.46.23852"
@@ -141,3 +142,16 @@ patches:
     description: Trims the pop-up's header, footer and margins to leave more space for definitions.
     file: nickel
     community: Dictionary pop-up - increase available text area
+
+  # SupportedLocales::localeForVolume replaces a book language Kobo doesn't list, like Russian, with
+  # the device's, so the book never looks for its own dictionary. This returns the book's language
+  # instead, by keeping the string the function would otherwise free before asking for the device's.
+  - id: book-language-dictionaries
+    title: Dictionaries for every book language
+    description: Picks a dictionary by the book's own language, even one Kobo doesn't list, like Russian. Without one it uses the usual dictionary.
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "SupportedLocales::localeForVolume(Volume const&)"
+      - ReplaceBytes: {Offset: 0x10A, FindH: "3868", CheckOnly: true}  # ldr r0, [r7]
+      - ReplaceBytes: {Offset: 0x12E, FindH: "3046", CheckOnly: true}  # mov r0, r6, where the function returns
+      - ReplaceBytes: {Offset: 0x10C, FindH: "0368002B", ReplaceH: "30600EE0"}  # ldr r3, [r0]; cmp r3, #0 -> str r0, [r6]; b 0x12E

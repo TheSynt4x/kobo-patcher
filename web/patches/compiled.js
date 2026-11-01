@@ -6,6 +6,7 @@ export const FIRMWARE = [
     "firmware": "4.38.23852",
     "url": "https://ereaderfiles.kobo.com/firmwares/kobo7/Oct2026/kobo-update-4.38.23852.zip",
     "google_drive": true,
+    "dropbox": true,
     "sizeMB": 133,
     "nickelSha256": "0e8e8ac3414a620d3386e60afcf4ccbf4ad3b8fdec8aeb5b553b01697966ec52",
     "nickelBinSha256": "cb3383aa0fcca1158558d9efcaf2248cee7a0d648ee26db5bc2ebfb26fff9992"
@@ -210,6 +211,21 @@ export const COMPILED_PATCHES = [
     "kind": "patch",
     "title": "More room in the dictionary pop-up",
     "description": "Trims the pop-up's header, footer and margins to leave more space for definitions.",
+    "needsFirmware": true,
+    "targets": {
+      "N306": [
+        "4.38.23852"
+      ],
+      "N428": [
+        "4.46.23852"
+      ]
+    }
+  },
+  {
+    "id": "book-language-dictionaries",
+    "kind": "patch",
+    "title": "Dictionaries for every book language",
+    "description": "Picks a dictionary by the book's own language, even one Kobo doesn't list, like Russian. Without one it uses the usual dictionary.",
     "needsFirmware": true,
     "targets": {
       "N306": [

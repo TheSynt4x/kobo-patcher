@@ -42,9 +42,11 @@ export const KOREADER = [
 // Add-ons don't touch system files, so they're offered on all firmware we know.
 const ALL_FIRMWARE = {};
 const DRIVE_FIRMWARE = {};
-for (const { model, firmware, google_drive: drive } of FIRMWARE) {
+const DROPBOX_FIRMWARE = {};
+for (const { model, firmware, google_drive: drive, dropbox } of FIRMWARE) {
   (ALL_FIRMWARE[model] ??= []).push(firmware);
   if (drive) (DRIVE_FIRMWARE[model] ??= []).push(firmware);
+  if (dropbox) (DROPBOX_FIRMWARE[model] ??= []).push(firmware);
 }
 
 // Every patch and add-on, and the model and firmware versions it's offered on.
@@ -57,6 +59,14 @@ export const REGISTRY = [
     description: "Turns off the device-model check that hides Google Drive, and adds the Drive settings.",
     needsFirmware: true,
     targets: DRIVE_FIRMWARE,
+  },
+  {
+    id: "dropbox",
+    kind: "patch",
+    title: "Dropbox in the More menu",
+    description: "Turns off the device-model check that hides Dropbox, and adds the Dropbox settings.",
+    needsFirmware: true,
+    targets: DROPBOX_FIRMWARE,
   },
   ...COMPILED_PATCHES,
   {

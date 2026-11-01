@@ -53,7 +53,7 @@ Add it under `firmware` in `patches.yaml`. Adding a version never removes the ot
 
 Then run `make patches`. It lists which patches don't fit, and those just won't be offered on that firmware, so you can open a pull request without fixing them all. Test what's left on a real Kobo first.
 
-Google Drive isn't compiled like the others. To offer it on your firmware, add `google_drive: true` to the entry once you've tested it.
+Google Drive and Dropbox aren't compiled like the others. To offer them on your firmware, add `google_drive: true` or `dropbox: true` to the entry once you've tested it.
 
 ## Can't do either?
 

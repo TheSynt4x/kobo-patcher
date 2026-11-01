@@ -10,7 +10,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
-  PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
+  PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
   readNickel, readNickelMenu, setConf, sha256,
 } from "../web/patcher.js";
 import { FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
@@ -115,10 +115,12 @@ test("the registry only offers items on firmware it can support", () => {
   }
   assert.ok(!registryFor("N428", "4.46.23852").some((i) => i.id === "google-drive"));
   assert.ok(registryFor("N306", "4.38.23852").some((i) => i.id === "google-drive"));
+  assert.ok(!registryFor("N428", "4.46.23852").some((i) => i.id === "dropbox"));
+  assert.ok(registryFor("N306", "4.38.23852").some((i) => i.id === "dropbox"));
   for (const build of FIRMWARE) {
     const edits = JSON.parse(readFileSync(join(repo, "web/patches", `${build.model}-${build.firmware}.json`), "utf8"));
     for (const item of registryFor(build.model, build.firmware)) {
-      if (item.kind === "patch" && item.id !== "google-drive") assert.ok(edits[item.id], `${item.id}: no edits for ${build.model}`);
+      if (item.kind === "patch" && !["google-drive", "dropbox"].includes(item.id)) assert.ok(edits[item.id], `${item.id}: no edits for ${build.model}`);
     }
   }
   assert.deepEqual(registryFor("N428", "4.38.23852"), []);
@@ -289,8 +291,8 @@ test("setConf adds the Drive settings where they belong", () => {
   ];
   for (const [text, expected] of cases) {
     let ours = text;
-    for (const patch of PATCHES) {
-      for (const [section, key, value] of patch.settings) ours = setConf(ours, section, key, value);
+    for (const [section, key, value] of PATCHES.find((patch) => patch.id === "google-drive").settings) {
+      ours = setConf(ours, section, key, value);
     }
     assert.equal(ours, expected);
   }
@@ -318,4 +320,16 @@ test("the real firmware is recognised and its package is the known good one", { 
   const patched = patchDriveCheck(nickel);
   const packaged = await buildPackage([{ path: NICKEL, data: patched, mode: 0o775 }], MTIME);
   assert.equal(await sha256(gunzipSync(packaged)), "452fcb7f8560242bb6203981e72d168d871846dd1e8b8f42b57451917098827e");
+});
+
+test("the Dropbox patch changes only its check on the real firmware, and works alongside Drive", { skip: !existsSync(REAL_FIRMWARE) }, async () => {
+  const nickel = await readNickel(await openAsBlob(REAL_FIRMWARE));
+  const patched = patchDropboxCheck(nickel);
+  const changed = nickel.reduce((found, byte, at) => (byte === patched[at] ? found : [...found, at]), []);
+  assert.deepEqual(changed, [0x96de48, 0x96de4b, 0x96de4d]);
+  assert.deepEqual([...patched.subarray(0x96de48, 0x96de4e)], [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]);
+  const both = planPatch({ libnickel: nickel, nickel: new Uint8Array(1) }, ["google-drive", "dropbox"]);
+  const settings = both.settings.map(([, key]) => key);
+  assert.ok(settings.includes("googledrive_link_account_start") && settings.includes("dropbox_link_account_poll"));
+  assert.throws(() => patchDropboxCheck(patched), Refused);
 });
