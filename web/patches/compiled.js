@@ -2,14 +2,17 @@
 export const FIRMWARE = [
   {
     "model": "N306",
+    "name": "Kobo Nia",
     "firmware": "4.38.23852",
     "url": "https://ereaderfiles.kobo.com/firmwares/kobo7/Oct2026/kobo-update-4.38.23852.zip",
+    "google_drive": true,
     "sizeMB": 133,
     "nickelSha256": "0e8e8ac3414a620d3386e60afcf4ccbf4ad3b8fdec8aeb5b553b01697966ec52",
     "nickelBinSha256": "cb3383aa0fcca1158558d9efcaf2248cee7a0d648ee26db5bc2ebfb26fff9992"
   },
   {
     "model": "N428",
+    "name": "Kobo Libra Colour",
     "firmware": "4.46.23852",
     "url": "https://ereaderfiles.kobo.com/firmwares/kobo13/Oct2026/kobo-update-4.46.23852.zip",
     "sizeMB": 162,

@@ -5,10 +5,18 @@ import { COMPILED_PATCHES, FIRMWARE } from "./patches/compiled.js";
 
 export { FIRMWARE };
 
-// Names for the model codes in .kobo/version, so an unsupported Kobo can still be named.
-export const MODEL_NAMES = { N306: "Kobo Nia", N428: "Kobo Libra Colour" };
+// Names for the model codes in .kobo/version.
+export const MODEL_NAMES = Object.fromEntries(FIRMWARE.map(({ model, name }) => [model, name]));
 
 export const FIRMWARE_LIST_URL = "https://pgaskin.net/KoboStuff/kobofirmware.html";
+
+// Opens the request form with this Kobo's details filled in. The serial isn't included.
+export function firmwareRequestUrl(model, firmware) {
+  const query = new URLSearchParams({
+    template: "firmware.yml", title: `Support ${model} on ${firmware}`, model, firmware,
+  });
+  return `https://github.com/TheSynt4x/kobo-patcher/issues/new?${query}`;
+}
 
 export function firmwareSearchUrl(name, firmware) {
   const query = `${name} firmware ${firmware} download kobo-update`;
@@ -33,7 +41,11 @@ export const KOREADER = [
 
 // Add-ons don't touch system files, so they're offered on all firmware we know.
 const ALL_FIRMWARE = {};
-for (const { model, firmware } of FIRMWARE) (ALL_FIRMWARE[model] ??= []).push(firmware);
+const DRIVE_FIRMWARE = {};
+for (const { model, firmware, google_drive: drive } of FIRMWARE) {
+  (ALL_FIRMWARE[model] ??= []).push(firmware);
+  if (drive) (DRIVE_FIRMWARE[model] ??= []).push(firmware);
+}
 
 // Every patch and add-on, and the model and firmware versions it's offered on.
 // "patch" items change Kobo's system files. "addon" items install from their own release file.
@@ -44,7 +56,7 @@ export const REGISTRY = [
     title: "Google Drive in the More menu",
     description: "Turns off the device-model check that hides Google Drive, and adds the Drive settings.",
     needsFirmware: true,
-    targets: { N306: ["4.38.23852"] },
+    targets: DRIVE_FIRMWARE,
   },
   ...COMPILED_PATCHES,
   {

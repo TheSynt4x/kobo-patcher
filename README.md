@@ -14,16 +14,9 @@ The page runs entirely in your browser and uploads nothing. It reads the system 
 
 ## Adding a patch or firmware
 
-You need Python with PyYAML, `c++filt` and Node.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Patches use kobopatch's format, and `make add FILE=my-patch.yaml` adds one.
 
-1. Edit `patches.yaml`. It explains the format at the top.
-2. Run `make patches`. It downloads what it needs, writes `web/patches/` and lists anything that doesn't fit.
-3. Run `make test` and `make serve`, and try it on a real Kobo.
-4. Open a pull request. Merging to `main` deploys the page once tests pass.
-
-CI applies every patch to the real firmware, and fails if `web/patches/` is out of date with `patches.yaml`.
-
-A patch written with `per_firmware` needs its offsets found again for each new firmware.
+CI applies every patch to the real firmware, and merging to `main` deploys the page once tests pass.
 
 ## Credits
 

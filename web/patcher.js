@@ -30,6 +30,14 @@ export const PATCHES = REGISTRY.filter((item) => item.kind === "patch")
 
 export class Refused extends Error {}
 
+// Says what to ask for, so the page can link to a request for this firmware.
+export class UnsupportedFirmware extends Refused {
+  constructor(message, model, firmware) {
+    super(message);
+    Object.assign(this, { model, firmware });
+  }
+}
+
 const encoder = new TextEncoder();
 
 function concat(chunks, size) {
@@ -554,8 +562,8 @@ export async function inspectKobo(root) {
   const name = MODEL_NAMES[version.model] ?? `Kobo model ${version.model}`;
   const build = FIRMWARE.find((b) => b.firmware === version.firmware && b.model === version.model);
   if (!build) {
-    throw new Refused(`found a ${name} on ${version.firmware}, which isn't supported yet. `
-      + "Press the ? to see what is");
+    throw new UnsupportedFirmware(`found a ${name} on ${version.firmware}, which isn't supported yet. `
+      + "Press the ? to see what is", version.model, version.firmware);
   }
   if (await exists(dot, "KoboRoot.tgz") || await dirExists(dot, "upgrade") || await exists(dot, "upgrade")) {
     throw new Refused("an update package is already waiting on this Kobo. Eject it, let it "

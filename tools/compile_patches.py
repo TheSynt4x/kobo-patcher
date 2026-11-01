@@ -109,7 +109,10 @@ class Binary:
 
 
 def hexbytes(value):
-    return bytes.fromhex(str(value).replace(" ", ""))
+    # YAML reads unspaced hex without quotes as a number, which loses its leading zeros.
+    if not isinstance(value, str):
+        raise Misfit(f"put quotes around the hex {value}")
+    return bytes.fromhex(value.replace(" ", ""))
 
 
 def blx_target(binary, at):
@@ -329,6 +332,8 @@ def main():
             name = patch["file"]
             try:
                 edits = compile_patch(binaries[name], steps_for(patch, version, sources))
+                if not edits:
+                    raise Misfit("it doesn't change anything")
             except (Misfit, struct.error, ValueError) as error:
                 print(f"  MISFIT {patch['id']}: {error}")
                 continue

@@ -10,7 +10,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
-  PATCHES, Refused, SUPPORTED, buildPackage, buildZip, patchDriveCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
+  PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
   readNickel, readNickelMenu, setConf, sha256,
 } from "../web/patcher.js";
 import { FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
@@ -123,6 +123,17 @@ test("the registry only offers items on firmware it can support", () => {
   }
   assert.deepEqual(registryFor("N428", "4.38.23852"), []);
   assert.deepEqual(planUndo(null, {}).files, []);
+});
+
+test("a Kobo on firmware we don't have is refused with what to ask for", async () => {
+  const version = new File(["N306000000000,4.1.15,4.99.1,4.1.15,4.1.15,x"], "version");
+  const root = { getDirectoryHandle: async () => ({ getFileHandle: async () => ({ getFile: async () => version }) }) };
+  await assert.rejects(inspectKobo(root), (error) => {
+    assert.ok(error instanceof UnsupportedFirmware);
+    assert.deepEqual([error.model, error.firmware], ["N306", "4.99.1"]);
+    assert.match(error.message, /Kobo Nia on 4\.99\.1/);
+    return true;
+  });
 });
 
 test("add-on files that aren't a known release are refused", async () => {

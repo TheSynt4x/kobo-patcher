@@ -1,0 +1,28 @@
+name: Support my firmware
+description: Ask for a Kobo model or firmware version to be added
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Model code
+      description: The first 4 characters of the serial in .kobo/version, like N306. Please don't post the whole serial.
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Under More > Settings > Device information.
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Firmware download link
+      description: If you've got one. The firmware list at pgaskin.net/KoboStuff/kobofirmware.html usually has it.
+  - type: checkboxes
+    id: test
+    attributes:
+      label: Testing
+      options:
+        - label: I can test it on my Kobo

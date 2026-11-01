@@ -1,7 +1,9 @@
 # Every compiled patch, and the firmware they're built for. After changing this file run
-# `make patches`, which writes web/patches/ for the page. Add new patches and firmware here.
+# `make patches`, which writes web/patches/ for the page. See CONTRIBUTING.md.
 #
-# A firmware needs its model, version and download link. The hashes are worked out for you.
+# A firmware needs its model code (the first 4 characters of the serial in .kobo/version), the
+# model's name, its version and its download link. The hashes are worked out for you. Set
+# google_drive to offer the Drive patch there, once you've tested it, because it isn't compiled.
 #
 # A patch has an id, title and description, optionally a warning, and a group where only one
 # in the group can be chosen. It sits in `file`, and its edits are one of these:
@@ -15,9 +17,12 @@ community_patches:
 
 firmware:
   - model: N306
+    name: Kobo Nia
     firmware: "4.38.23852"
     url: https://ereaderfiles.kobo.com/firmwares/kobo7/Oct2026/kobo-update-4.38.23852.zip
+    google_drive: true
   - model: N428
+    name: Kobo Libra Colour
     firmware: "4.46.23852"
     url: https://ereaderfiles.kobo.com/firmwares/kobo13/Oct2026/kobo-update-4.46.23852.zip
 

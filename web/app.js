@@ -1,9 +1,9 @@
 import {
-  Refused, inspectKobo, koboSerial, writeFullBackup, planPatch, planUndo, readBackup, readFirmware, readKOReader,
+  Refused, UnsupportedFirmware, inspectKobo, koboSerial, writeFullBackup, planPatch, planUndo, readBackup, readFirmware, readKOReader,
   readNickelMenu, sha256, writeToKobo,
 } from "./patcher.js";
 import {
-  FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, NICKELMENU, firmwareSearchUrl, registryFor,
+  FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, NICKELMENU, firmwareRequestUrl, firmwareSearchUrl, registryFor,
 } from "./supported.js";
 
 const ADDON_FILES = {
@@ -272,6 +272,11 @@ async function selectKobo() {
       say("kobo-status", describe(kobo), "good");
     } catch (error) {
       say("kobo-status", explain(error), "bad");
+      if (error instanceof UnsupportedFirmware) {
+        $("kobo-status").append(" or ", element("a", {
+          href: firmwareRequestUrl(error.model, error.firmware), target: "_blank", rel: "noopener", textContent: "ask for it to be added",
+        }), ".");
+      }
     }
   });
 }
