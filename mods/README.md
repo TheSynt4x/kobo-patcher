@@ -21,7 +21,7 @@ void nk_mod_init(void) { nk_more_row("Hello", icon, sizeof icon, open_screen, 0)
 Build it with `mods/build.sh <folder>`, which needs zig, and Python with PyYAML for `patches`. It writes
 `build/lib<folder>.so`, which goes in `/usr/local/Kobo/imageformats/` on the Kobo.
 
-**Status: only run in an emulator of the Nia's firmware, 4.38.23852. Not on a real Kobo yet.**
+**Status: works on a real Kobo Nia on firmware 4.38.23852, tested on one device. Not yet tried on other models. The crash protection below has only been tested in an emulator.**
 
 ## What keeps a Kobo safe
 
