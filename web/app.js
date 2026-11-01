@@ -13,7 +13,7 @@ const ADDON_FILES = {
 
 const $ = (id) => document.getElementById(id);
 const canWrite = "showDirectoryPicker" in window && "showSaveFilePicker" in window;
-const state = { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {} };
+const state = { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {}, riskAccepted: false };
 
 function say(id, text, kind = "") {
   $(id).textContent = text;
@@ -69,6 +69,7 @@ function render() {
   $("browser-notice").hidden = canWrite;
   $("step-firmware").hidden = !state.kobo || (!patchesChanged() && !recorded().length);
   $("step-patches").classList.toggle("locked", !state.kobo);
+  $("step-firmware").classList.toggle("locked", !state.kobo);
   // Stays readable after a run, when the Kobo is no longer selected, for its "Done" message.
   $("step-run").classList.toggle("locked", !state.kobo && !$("run-status").textContent);
   let step = 0;
@@ -394,7 +395,17 @@ $("firmware").addEventListener("change", (event) => {
   if (file) chooseFirmware(file);
 });
 $("help").addEventListener("click", showSupported);
-$("connect").addEventListener("click", selectKobo);
+$("connect").addEventListener("click", () => {
+  if (state.riskAccepted) selectKobo();
+  else $("risk").showModal();
+});
+$("risk-cancel").addEventListener("click", () => $("risk").close());
+// The folder picker needs a click to open from, so it starts from this one.
+$("risk-accept").addEventListener("click", () => {
+  state.riskAccepted = true;
+  $("risk").close();
+  selectKobo();
+});
 $("backup").addEventListener("click", backUpEverything);
 $("patch").addEventListener("click", patch);
 $("undo").addEventListener("click", undo);

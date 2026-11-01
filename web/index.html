@@ -42,10 +42,12 @@
   .drop small { display: block; margin-top: 4px; color: var(--muted); overflow-wrap: anywhere; }
   .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #patches { display: flex; flex-direction: column; gap: 14px; }
+  #patches:empty { display: none; }
   .patch { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
-  .patch input { margin: 5px 0 0; width: 16px; height: 16px; accent-color: var(--accent); }
+  .patch input { flex: none; margin: 4px 0 0; width: 16px; height: 16px; accent-color: var(--accent); }
   .patch strong { display: block; font-weight: 600; }
-  .patch small { color: var(--muted); font-size: 14px; }
+  .patch small { display: block; margin-top: 2px; color: var(--muted); font-size: 14px; line-height: 1.4; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   button {
     padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer;
@@ -68,16 +70,18 @@
   dialog ul { margin: 0 0 8px; padding-left: 20px; }
   dialog a { color: var(--accent); }
   dialog form { margin-top: 16px; text-align: right; }
+  dialog .actions { justify-content: flex-end; margin-top: 16px; }
   .find { margin: 0 0 12px; font-size: 15px; }
   .find:empty { display: none; }
   .find a { color: var(--accent); }
-  .patch + .patch { margin-top: 14px; }
-  .addon { margin: 8px 0 0 26px; }
+  .addon { margin: -6px 0 0 26px; font-size: 14px; }
+  .addon p { margin-bottom: 6px; }
   .addon input { max-width: 100%; font-size: 14px; }
   .addon a { color: var(--accent); }
   .addon .status { margin-top: 4px; font-size: 14px; }
-  .warning { display: block; margin-top: 2px; color: var(--bad); font-size: 14px; }
+  .patch .warning { color: var(--bad); }
   .fine { margin-top: 20px; color: var(--muted); font-size: 14px; }
+  .fine a { color: inherit; }
 </style>
 </head>
 <body>
@@ -124,12 +128,21 @@
     <p class="status" id="run-status" role="status"></p>
   </section>
 
-  <p class="fine">Other models and firmware are refused. Patching system files can leave a Kobo needing a factory reset, so use this at your own risk. A firmware update removes the patch, so patch again afterwards with the new firmware file. Community patches come from <a href="https://github.com/pgaskin/kobopatch-patches" target="_blank" rel="noopener">kobopatch-patches</a> (MIT licence) and its contributors. This page isn't affiliated with Kobo and comes with no warranty. <a href="https://github.com/TheSynt4x/kobo-patcher" target="_blank" rel="noopener">Source code and credits</a> (MIT licence).</p>
+  <p class="fine">Only works on the models and firmware listed under the ? button. A firmware update wipes your patches, so you'll need to patch again after one. Community patches are from <a href="https://github.com/pgaskin/kobopatch-patches" target="_blank" rel="noopener">kobopatch-patches</a>. Not affiliated with Kobo. <a href="https://github.com/TheSynt4x/kobo-patcher" target="_blank" rel="noopener">Source on GitHub</a>.</p>
 </main>
 <dialog id="supported" aria-labelledby="supported-title">
   <h2 id="supported-title">Supported versions</h2>
   <div id="supported-list"></div>
   <form method="dialog"><button class="primary" autofocus>Close</button></form>
+</dialog>
+<dialog id="risk" aria-labelledby="risk-title">
+  <h2 id="risk-title">Use at your own risk</h2>
+  <p>This changes system files on your Kobo. If something goes wrong you might need a factory reset, and it could even brick your device.</p>
+  <p>It comes with no warranty, and I'm not liable for anything that happens to your Kobo. Back it up first.</p>
+  <div class="actions">
+    <button id="risk-cancel" type="button" autofocus>Cancel</button>
+    <button id="risk-accept" type="button" class="primary">I understand, continue</button>
+  </div>
 </dialog>
 <script type="module" src="app.js"></script>
 </body>
