@@ -119,7 +119,7 @@ export const COMPILED_PATCHES = [
     "kind": "patch",
     "category": "Hide Kobo's promotions",
     "title": "No recommendations on the home screen",
-    "description": "Hides the recommendations column that shows when fewer than 2 books are open.",
+    "description": "Hides the top-right tile that shows when fewer than 2 books are open, with recommendations or the Quick Tour.",
     "needsFirmware": true,
     "targets": {
       "N306": [

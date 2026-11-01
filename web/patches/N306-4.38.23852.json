@@ -19,6 +19,12 @@
    "at": 10830448,
    "find": "0068",
    "replace": "0020"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9126536,
+   "find": "c6f542e8",
+   "replace": "00bf00bf"
   }
  ],
  "margins": [

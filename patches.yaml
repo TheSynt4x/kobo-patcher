@@ -55,6 +55,12 @@ patches:
     steps:
       - BaseAddress: "UpgradeCheckResult::getUpgradeType() const"
       - ReplaceBytes: {Offset: 0x4, FindH: "0068", ReplaceH: "0020"}  # ldr r0, [r0] -> movs r0, #0
+      # The check saves an offered Qt6 upgrade's link before reading the type, and Home prompts from that link.
+      - BaseAddress: "UpgradeCheckCommand::onCheckResult(UpgradeCheckResult const&)"
+      - ReplaceBytes:
+          Offset: 0x60
+          ReplaceInstNOP: true
+          FindInstBLX: {SymPLT: "ApplicationSettings::setAvailableQt6Upgrade(QString const&)"}
 
   - id: margins
     title: Finer margins
@@ -80,7 +86,7 @@ patches:
   - id: no-recommendations
     title: No recommendations on the home screen
     category: "Hide Kobo's promotions"
-    description: Hides the recommendations column that shows when fewer than 2 books are open.
+    description: Hides the top-right tile that shows when fewer than 2 books are open, with recommendations or the Quick Tour.
     file: libnickel.so.1.0.0
     community: Remove recommendations (row1col2) from home screen
 
