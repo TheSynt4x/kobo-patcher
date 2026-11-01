@@ -16,6 +16,7 @@ PATCH = """
 Hide the Thing, please:
   - Enabled: no
   - PatchGroup: Home layout
+  - Category: Covers
   - Description: |
       Hides the thing
       on the home screen.
@@ -27,11 +28,15 @@ Hide the Thing, please:
 """
 
 
+CATEGORIES = ["Reading", "Covers"]
+
+
 class ToEntry(unittest.TestCase):
     def test_takes_what_the_page_needs_and_keeps_only_the_edits(self):
         (title, steps), = yaml.safe_load(PATCH).items()
-        entry = to_entry(title, steps)
+        entry = to_entry(title, steps, CATEGORIES)
         self.assertEqual(entry["id"], "hide-the-thing-please")
+        self.assertEqual(entry["category"], "Covers")
         self.assertEqual(entry["title"], "Hide the Thing, please")
         self.assertEqual(entry["description"], "Hides the thing on the home screen.")
         self.assertEqual(entry["group"], "home-layout")
@@ -40,11 +45,16 @@ class ToEntry(unittest.TestCase):
 
     def test_needs_a_description(self):
         with self.assertRaises(Misfit):
-            to_entry("No words", [{"Enabled": False}, {"BaseAddress": "x"}])
+            to_entry("No words", [{"Category": "Covers"}, {"BaseAddress": "x"}], CATEGORIES)
+
+    def test_needs_a_known_category(self):
+        for steps in ([{"Description": "Words"}], [{"Description": "Words"}, {"Category": "Nonsense"}]):
+            with self.assertRaises(Misfit):
+                to_entry("No category", steps, CATEGORIES)
 
     def test_refuses_something_that_isnt_a_patch(self):
         with self.assertRaises(Misfit):
-            to_entry("Not a list", "hello")
+            to_entry("Not a list", "hello", CATEGORIES)
 
 
 class HexBytes(unittest.TestCase):

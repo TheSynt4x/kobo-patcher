@@ -5,8 +5,9 @@
 # model's name, its version and its download link. The hashes are worked out for you. Set
 # google_drive or dropbox to offer that patch there, once you've tested it, because they aren't compiled.
 #
-# A patch has an id, title and description, optionally a warning, and a group where only one
-# in the group can be chosen. It sits in `file`, and its edits are one of these:
+# A patch has an id, title, description and one of the categories below, which set the order the
+# page shows them in. It can have a warning, and a group where only one in the group can be chosen.
+# It sits in `file`, and its edits are one of these:
 #   community     the title of a patch in kobopatch-patches
 #   steps         edits that fit every firmware
 #   per_firmware  edits written for each firmware, usually from reading its code
@@ -27,17 +28,28 @@ firmware:
     firmware: "4.46.23852"
     url: https://ereaderfiles.kobo.com/firmwares/kobo13/Oct2026/kobo-update-4.46.23852.zip
 
+categories:
+  - Reading
+  - Cloud storage
+  - Covers
+  - Hide Kobo's promotions
+  - Updates and USB
+
 patches:
   - id: upgrade-confirmation
     title: Ask before firmware updates
+    category: Updates and USB
     description: Always shows Kobo's confirmation before an update, so a silent update can't remove these patches.
+    group: updates
     file: libnickel.so.1.0.0
     community: Always show confirmation dialog before upgrading
 
   # Nickel checks this value in every update path, and 0 means it's up to date. Sync carries on as usual.
   - id: block-updates
     title: Block firmware updates
+    category: Updates and USB
     description: Kobo always reports it's up to date, so an update can't remove these patches. Wi-Fi and sync aren't affected.
+    group: updates
     warning: You won't get security fixes or new features until you remove this patch.
     file: libnickel.so.1.0.0
     steps:
@@ -46,24 +58,28 @@ patches:
 
   - id: margins
     title: Finer margins
+    category: Reading
     description: Makes the margin slider go up in smaller steps, from 0 to 8% of the screen width.
     file: libnickel.so.1.0.0
     community: Custom left & right margins
 
   - id: font-sizes
     title: More small font sizes
+    category: Reading
     description: Adds finer steps at small sizes. The largest sizes go away, so skip this if you read very large text.
     file: libnickel.so.1.0.0
     community: Custom font sizes
 
   - id: line-spacing
     title: Narrower line spacing
+    category: Reading
     description: Replaces the line spacing slider with 10 values from 0.8 to 1.1, instead of 15 that go much wider.
     file: libnickel.so.1.0.0
     community: My 10 line spacing values
 
   - id: no-recommendations
     title: No recommendations on the home screen
+    category: "Hide Kobo's promotions"
     description: Hides the recommendations column that shows when fewer than 2 books are open.
     file: libnickel.so.1.0.0
     community: Remove recommendations (row1col2) from home screen
@@ -72,6 +88,7 @@ patches:
   # patch no longer fits: the wishlist's number has since changed.
   - id: no-kobo-plus
     title: No Kobo Plus suggestion on the home screen
+    category: "Hide Kobo's promotions"
     description: Stops the home screen's rotating suggestion links from offering Kobo Plus.
     file: libnickel.so.1.0.0
     steps:
@@ -86,6 +103,7 @@ patches:
   # setVisible call for the discover button, the fifth button setupUi creates, always get false.
   - id: no-discover
     title: No Discover button
+    category: "Hide Kobo's promotions"
     description: Hides Discover, with Kobo Plus and the store, from the bottom bar. Your books and Google Drive stay.
     file: libnickel.so.1.0.0
     per_firmware:
@@ -102,6 +120,7 @@ patches:
   # wishlistButton at 0x10 and articlesButton at 0x20, and these make their setVisible get false.
   - id: no-more-extras
     title: No My Wishlist or My Articles
+    category: "Hide Kobo's promotions"
     description: Hides both from the More page. Everything else on that page stays.
     file: libnickel.so.1.0.0
     per_firmware:
@@ -120,6 +139,7 @@ patches:
 
   - id: usb-when-locked
     title: USB drive even when locked
+    category: Updates and USB
     description: Lets a locked Kobo connect as a USB drive if it's plugged in while the sleep screen is showing.
     warning: This makes the lock screen PIN useless for protecting your books and sign-ins.
     file: libnickel.so.1.0.0
@@ -129,6 +149,7 @@ patches:
   # community patch doesn't fit: its result comes out 3 bytes too big for the firmware's space.
   - id: home-covers
     title: Larger home screen covers
+    category: Covers
     description: Reduces the home screen's margins so covers can be bigger.
     group: home-layout
     file: nickel
@@ -136,6 +157,7 @@ patches:
 
   - id: no-home-footer-covers
     title: No Kobo Plus footer, and larger home screen covers
+    category: Covers
     description: Removes the row that says "Find your next book in Kobo Plus or our store", and makes covers bigger.
     group: home-layout
     file: nickel
@@ -143,12 +165,14 @@ patches:
 
   - id: library-covers
     title: Larger library covers
+    category: Covers
     description: Increases the cover thumbnails in the My Books list.
     file: nickel
     community: Increase library cover size
 
   - id: dictionary-area
     title: More room in the dictionary pop-up
+    category: Reading
     description: Trims the pop-up's header, footer and margins to leave more space for definitions.
     file: nickel
     community: Dictionary pop-up - increase available text area
@@ -158,6 +182,7 @@ patches:
   # instead, by keeping the string the function would otherwise free before asking for the device's.
   - id: book-language-dictionaries
     title: Dictionaries for every book language
+    category: Reading
     description: Picks a dictionary by the book's own language, even one Kobo doesn't list, like Russian. Without one it uses the usual dictionary.
     file: libnickel.so.1.0.0
     steps:

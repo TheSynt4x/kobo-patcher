@@ -19,14 +19,14 @@ from compile_patches import CACHE, FILES, REPO, Binary, Misfit, compile_patch, d
 
 SPEC = REPO / "patches.yaml"
 # Only kobopatch's own bookkeeping, so these don't become edits.
-INFO = ("Enabled", "Description", "PatchGroup")
+INFO = ("Enabled", "Description", "PatchGroup", "Category")
 
 
 def slug(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-def to_entry(title, steps):
+def to_entry(title, steps, categories):
     """A kobopatch patch as an entry for patches.yaml, without its file yet."""
     if not isinstance(steps, list) or not all(isinstance(step, dict) and len(step) == 1 for step in steps):
         raise Misfit("it should be a list of instructions, as in kobopatch")
@@ -34,7 +34,9 @@ def to_entry(title, steps):
     description = " ".join(str(info.get("Description", "")).split())
     if not description:
         raise Misfit("it needs a Description, which the page shows")
-    entry = {"id": slug(title), "title": title, "description": description}
+    if info.get("Category") not in categories:
+        raise Misfit(f"it needs a Category, one of: {', '.join(categories)}")
+    entry = {"id": slug(title), "title": title, "category": info["Category"], "description": description}
     if info.get("PatchGroup"):
         entry["group"] = slug(str(info["PatchGroup"]))
     entry["steps"] = [step for step in steps if next(iter(step)) not in INFO]
@@ -70,7 +72,7 @@ def main(path):
     for title, steps in (yaml.safe_load(Path(path).read_text()) or {}).items():
         print(title)
         try:
-            entry = to_entry(title, steps)
+            entry = to_entry(title, steps, spec["categories"])
             if entry["id"] in known:
                 raise Misfit(f"there's already a patch called {entry['id']}")
         except Misfit as error:

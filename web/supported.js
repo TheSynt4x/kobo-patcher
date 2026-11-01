@@ -1,9 +1,12 @@
 // What the patcher accepts. The page refuses anything not listed here, and its
 // "supported versions" window is built from this file. Firmware and compiled patches
 // come from patches.yaml, through `make patches`.
-import { COMPILED_PATCHES, FIRMWARE } from "./patches/compiled.js";
+import { COMPILED_PATCHES, FIRMWARE, PATCH_CATEGORIES } from "./patches/compiled.js";
 
 export { FIRMWARE };
+
+// The page's sections, in order. Patch categories are set in patches.yaml.
+export const CATEGORIES = [...PATCH_CATEGORIES, "Add-ons"];
 
 // Names for the model codes in .kobo/version.
 export const MODEL_NAMES = Object.fromEntries(FIRMWARE.map(({ model, name }) => [model, name]));
@@ -51,10 +54,13 @@ for (const { model, firmware, google_drive: drive, dropbox } of FIRMWARE) {
 
 // Every patch and add-on, and the model and firmware versions it's offered on.
 // "patch" items change Kobo's system files. "addon" items install from their own release file.
+const categoryOrder = (item) => CATEGORIES.indexOf(item.category);
+
 export const REGISTRY = [
   {
     id: "google-drive",
     kind: "patch",
+    category: "Cloud storage",
     title: "Google Drive in the More menu",
     description: "Turns off the device-model check that hides Google Drive, and adds the Drive settings.",
     needsFirmware: true,
@@ -63,6 +69,7 @@ export const REGISTRY = [
   {
     id: "dropbox",
     kind: "patch",
+    category: "Cloud storage",
     title: "Dropbox in the More menu",
     description: "Turns off the device-model check that hides Dropbox, and adds the Dropbox settings.",
     needsFirmware: true,
@@ -72,6 +79,7 @@ export const REGISTRY = [
   {
     id: "nickelmenu",
     kind: "addon",
+    category: "Add-ons",
     title: "NickelMenu",
     description: "Adds a menu button to the bottom bar of the home screen.",
     targets: ALL_FIRMWARE,
@@ -79,11 +87,12 @@ export const REGISTRY = [
   {
     id: "koreader",
     kind: "addon",
+    category: "Add-ons",
     title: "KOReader",
     description: "Copies KOReader to the Kobo and adds it to the NickelMenu button. Needs NickelMenu, and takes a few minutes.",
     targets: ALL_FIRMWARE,
   },
-];
+].sort((a, b) => categoryOrder(a) - categoryOrder(b));
 
 export function registryFor(model, firmware) {
   return REGISTRY.filter((item) => item.targets[model]?.includes(firmware));

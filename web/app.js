@@ -3,7 +3,7 @@ import {
   readNickelMenu, sha256, writeToKobo,
 } from "./patcher.js";
 import {
-  FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, NICKELMENU, firmwareRequestUrl, firmwareSearchUrl, registryFor,
+  CATEGORIES, FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, NICKELMENU, firmwareRequestUrl, firmwareSearchUrl, registryFor,
 } from "./supported.js";
 
 const ADDON_FILES = {
@@ -202,8 +202,15 @@ function addonFile(addon) {
 
 function showPatches() {
   // Ticked if already on the Kobo, because changing patches rebuilds them all from the originals.
-  const rows = offered("patch").map((patch) => patchRow(patch, recorded().includes(patch.id)));
-  for (const addon of offered("addon")) rows.push(patchRow(addon, isInstalled(addon.id)), addonFile(addon));
+  const rows = [];
+  for (const category of CATEGORIES) {
+    const items = state.items.filter((item) => item.category === category);
+    if (items.length) rows.push(element("h3", { textContent: category }));
+    for (const item of items) {
+      if (item.kind === "addon") rows.push(patchRow(item, isInstalled(item.id)), addonFile(item));
+      else rows.push(patchRow(item, recorded().includes(item.id)));
+    }
+  }
   $("patches").replaceChildren(...rows);
 }
 

@@ -12,6 +12,7 @@ Patches use the same format as [kobopatch](https://github.com/pgaskin/kobopatch-
 Hide the thing:
   - Enabled: no
   - Description: Hides the thing on the home screen.
+  - Category: Hide Kobo's promotions
   - BaseAddress: "SomeView::updateButtons()"
   - ReplaceBytes:
       Offset: 0xF6
@@ -19,7 +20,7 @@ Hide the thing:
       ReplaceH: 00 21
 ```
 
-The title and description are what people see on the page, so keep them plain. Then run:
+The title and description are what people see on the page, so keep them plain. `Category` isn't part of kobopatch's format, so add it yourself. It's the section the patch appears under, and has to be one of the `categories` in `patches.yaml`. Then run:
 
 ```bash
 make add FILE=my-patch.yaml

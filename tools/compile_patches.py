@@ -310,6 +310,9 @@ def steps_for(patch, version, sources):
 
 def main():
     spec = yaml.safe_load((REPO / "patches.yaml").read_text())
+    for patch in spec["patches"]:
+        if patch.get("category") not in spec["categories"]:
+            raise SystemExit(f"{patch['id']}: category has to be one of {', '.join(spec['categories'])}")
     folder = community_folder(spec["community_patches"]["ref"], spec["community_patches"]["version"])
     sources = {name: load_patches(folder, name) for name in FILES}
     out = REPO / "web/patches"
@@ -346,12 +349,13 @@ def main():
         (out / f"{model}-{version}.json").write_text(json.dumps(result, indent=1) + "\n")
     offered = []
     for patch in spec["patches"]:
-        item = {"id": patch["id"], "kind": "patch", "title": patch["title"], "description": patch["description"]}
+        item = {"id": patch["id"], "kind": "patch", "category": patch["category"], "title": patch["title"], "description": patch["description"]}
         item.update({key: patch[key] for key in ("warning", "group") if key in patch})
         offered.append({**item, "needsFirmware": True, "targets": targets[patch["id"]]})
     (out / "compiled.js").write_text(
         "// Written by tools/compile_patches.py from patches.yaml. Run `make patches` to change it.\n"
         f"export const FIRMWARE = {json.dumps(firmware_list, indent=2)};\n\n"
+        f"export const PATCH_CATEGORIES = {json.dumps(spec['categories'], indent=2)};\n\n"
         f"export const COMPILED_PATCHES = {json.dumps(offered, indent=2)};\n"
     )
 

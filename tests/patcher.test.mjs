@@ -13,7 +13,7 @@ import {
   PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
   readNickel, readNickelMenu, setConf, sha256,
 } from "../web/patcher.js";
-import { FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
+import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const work = mkdtempSync(join(tmpdir(), "patcher-test-"));
@@ -125,6 +125,12 @@ test("the registry only offers items on firmware it can support", () => {
   }
   assert.deepEqual(registryFor("N428", "4.38.23852"), []);
   assert.deepEqual(planUndo(null, {}).files, []);
+});
+
+test("every item has a category, and items are in category order", () => {
+  const order = REGISTRY.map((item) => CATEGORIES.indexOf(item.category));
+  assert.ok(!order.includes(-1), "an item has an unknown category");
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
 });
 
 test("a Kobo on firmware we don't have is refused with what to ask for", async () => {
@@ -250,7 +256,7 @@ for (const build of FIRMWARE) {
     for (const extra of items.filter((i) => i.group)) {
       planPatch(firmware, [...items.filter((i) => !i.group).map((i) => i.id), extra.id], { edits });
     }
-    const ids = items.filter((i) => !i.group || i.id === "no-home-footer-covers").map((i) => i.id);
+    const ids = items.filter((i) => !i.group || ["no-home-footer-covers", "block-updates"].includes(i.id)).map((i) => i.id);
     const plan = planPatch(firmware, ids, { edits });
     assert.equal(plan.files.length, 2);
     for (const file of plan.files) {
