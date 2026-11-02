@@ -514,9 +514,10 @@ __attribute__((visibility("default"))) const char *qt_plugin_query_metadata(void
 __attribute__((visibility("default"))) void *qt_plugin_instance(void) { return 0; }
 
 /* A mod that crashes Nickel mustn't stop the Kobo starting. The file is moved away while it's being
- * tried, so a crash means it isn't loaded next time, and it's put back after a quiet while. */
-static void failsafe_arm(void) { rename(INSTALLED_AT, DISABLED_AT); }
-static void failsafe_clear(void) { rename(DISABLED_AT, INSTALLED_AT); }
+ * tried, so a crash means it isn't loaded next time, and it's put back after a quiet while. Each move
+ * is synced, because a frozen Kobo gets held off, and an unsynced move can be lost with the power. */
+static void failsafe_arm(void) { rename(INSTALLED_AT, DISABLED_AT); sync(); }
+static void failsafe_clear(void) { rename(DISABLED_AT, INSTALLED_AT); sync(); }
 
 static void *failsafe_after_startup(void *unused) {
     sleep(FAILSAFE_SECONDS);
