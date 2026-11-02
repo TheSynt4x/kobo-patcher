@@ -50,6 +50,14 @@ static int is_hex(const char *text) {
     return 1;
 }
 
+/* Flags are separated by commas. Ones this mod doesn't know are left for a newer one. */
+static int has_flag(const char *flags, const char *flag) {
+    size_t length = strlen(flag);
+    for (const char *at = flags; (at = strstr(at, flag)); at += length)
+        if ((at == flags || at[-1] == ',') && (!at[length] || at[length] == ',')) return 1;
+    return 0;
+}
+
 static int allowed(const char *file) {
     for (size_t i = 0; i < sizeof allowed_files / sizeof *allowed_files; i++)
         if (!strcmp(file, allowed_files[i])) return 1;
@@ -81,7 +89,7 @@ static int parse(Owned *list, char *error, size_t size) {
             if (patch && !patch->edit_count) return fail(error, size, "a patch before line %d has no edits", line_number);
             patch = &list->patches[patches++];
             *patch = (Patch){fields[1], fields[5], fields[2], strcmp(fields[3], "-") ? fields[3] : 0, *fields[6] ? fields[6] : 0,
-                             !strcmp(fields[4], "restart"), &list->edits[edits], 0};
+                             has_flag(fields[4], "restart"), has_flag(fields[4], "cached"), &list->edits[edits], 0};
         } else if (!strcmp(fields[0], "edit")) {
             char *end;
             unsigned long at = count == 5 ? strtoul(fields[2], &end, 10) : 0;

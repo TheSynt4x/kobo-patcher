@@ -265,8 +265,11 @@ int live_set(const Patch *patch, int on, int *restart) {
         free_sheet(before[i]);
         free_sheet(after);
     }
-    if (patch->restart) *restart = 1;
-    if (edits_function(patch, "_ZNK15ReadingSettings17lineHeightScalarsEv") && !rebuild_line_spacings()) *restart = 1;
+    /* make patches marks code that runs once as cached. The line spacing list is the one the mod
+     * can rebuild; anything else cached takes a restart. */
+    int spacing = edits_function(patch, "_ZNK15ReadingSettings17lineHeightScalarsEv");
+    int rebuilt = spacing && rebuild_line_spacings();
+    if (patch->restart || ((patch->cached || spacing) && !rebuilt)) *restart = 1;
     if (!on && edits_function(patch, "_ZN12HomePageView17configureTopRightE15HomePageWidgets") && fixups() < 0) *restart = 1;
     nk_log("%s: %s", patch->id, live_state(patch) == ON ? "on" : "off");
     return 1;

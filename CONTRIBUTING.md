@@ -37,7 +37,7 @@ make serve
 
 Open http://localhost:8765 in Chrome or Edge, patch your Kobo, and check it did what you expected. Then open a pull request, and commit the changes to `patches.yaml` and `web/patches/`.
 
-The page only offers the Patches mod once `make mods` has built it into `web/mods/`, which needs zig. The site builds it when it deploys, so don't commit it. The mod reads its patch list from a file, which `make mods` writes to `web/mods/lists/`. To try a patch with the mod, copy your Kobo's list to `.adds/patches/lists/` on it and open Kobo Patcher again: there's no need to reinstall anything. The mod switches patches straight away; if yours only shows after a restart, see "The Patches mod" in `mods/README.md`.
+The page only offers the Patches mod once `make mods` has built it into `web/mods/`, which needs zig. The site builds it when it deploys, so don't commit it. The mod reads its patch list from a file, which `make mods` writes to `web/mods/lists/`. To try a patch with the mod, copy your Kobo's list to `.adds/patches/lists/` on it and open Kobo Patcher again: there's no need to reinstall anything. The mod switches patches straight away. `make patches` notices a patch to code Nickel runs only once, and the mod then asks for a restart. If yours only shows after a restart anyway, add `restart: yes` to it, and see "The Patches mod" in `mods/README.md`.
 
 A patch that needs different bytes on each firmware goes in `patches.yaml` by hand, under `per_firmware`. The `no-discover` patch is an example.
 

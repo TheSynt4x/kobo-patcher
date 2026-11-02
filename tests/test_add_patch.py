@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Run with: make test"""
+import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -10,7 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import yaml
 
 from add_patch import to_entry
-from compile_patches import Misfit, hexbytes
+from compile_patches import CACHE, Binary, Misfit, hexbytes, read_binaries
+
+REPO = Path(__file__).resolve().parent.parent
+NIA = CACHE / "firmware/kobo-update-4.38.23852.zip"
 
 PATCH = """
 Hide the Thing, please:
@@ -64,6 +69,31 @@ class HexBytes(unittest.TestCase):
     def test_refuses_hex_yaml_read_as_a_number(self):
         with self.assertRaises(Misfit):
             hexbytes(yaml.safe_load("0121"))
+
+
+@unittest.skipUnless(NIA.exists() or os.environ.get("REQUIRE_FIRMWARE"), "needs the Nia firmware from make patches")
+class RunsOnce(unittest.TestCase):
+    """The Nia's libnickel, checked against what was found by reading its code."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.nickel = Binary(read_binaries(NIA)["libnickel.so.1.0.0"])
+        cls.edits = json.loads((REPO / "web/patches/N306-4.38.23852.json").read_text())
+
+    def runs_once(self, patch):
+        return any(self.nickel.runs_once(edit["at"]) for edit in self.edits[patch])
+
+    def test_the_line_spacing_list_is_worked_out_once(self):
+        self.assertTrue(self.runs_once("line-spacing"))
+
+    def test_a_static_elsewhere_in_the_function_doesnt_count(self):
+        # smartLinkGeneralMessage sets up a static null Volume, after the edit.
+        self.assertTrue(self.nickel.calls(self.nickel.function_at(self.edits["no-kobo-plus"][0]["at"]), "__cxa_guard_acquire"))
+        self.assertFalse(self.runs_once("no-kobo-plus"))
+
+    def test_code_that_runs_every_time(self):
+        self.assertFalse(self.runs_once("no-discover"))
+        self.assertFalse(self.runs_once("font-sizes"))
 
 
 unittest.main()

@@ -28,7 +28,8 @@ jobs:
       - name: Check web/patches matches patches.yaml
         run: |
           make patches
-          git diff --exit-code web/patches
+          git status --porcelain web/patches
+          test -z "$(git status --porcelain web/patches)"
       - run: make test
         env:
           REQUIRE_FIRMWARE: "1"

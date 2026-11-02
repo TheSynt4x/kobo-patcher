@@ -13,6 +13,7 @@ typedef struct {
 typedef struct {
     const char *id, *title, *category, *group, *warning; /* group and warning can be 0 */
     int restart; /* only takes effect once Nickel restarts */
+    int cached;  /* changes code Nickel runs once, so it needs a rebuild or a restart */
     const Edit *edits;
     int edit_count;
 } Patch;

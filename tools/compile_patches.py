@@ -7,6 +7,7 @@ A patch that doesn't fit a firmware is reported and not offered there, rather th
 Needs PyYAML and c++filt. Run it with `make patches`. It downloads the firmware and
 https://github.com/pgaskin/kobopatch-patches into ~/.cache/kobo-patcher the first time.
 """
+import bisect
 import hashlib
 import json
 import re
@@ -64,9 +65,13 @@ class Binary:
         strings = sections[dynsym[6]]
         table = self.data[strings[4]:strings[4] + strings[5]]
         raw = []
+        self.functions = []
         for at in range(dynsym[4], dynsym[4] + dynsym[5], 16):
-            name_at, value = struct.unpack_from("<II", self.data, at)
+            name_at, value, size, info = struct.unpack_from("<IIIB", self.data, at)
             raw.append((table[name_at:table.index(b"\0", name_at)].decode(), value))
+            if info & 0xF == 2 and value and size:  # STT_FUNC
+                self.functions.append((value & ~1, size))
+        self.functions.sort()
         filtered = subprocess.run(["c++filt"], input="\n".join(n for n, _ in raw), capture_output=True,
                                   text=True, check=True).stdout.splitlines()
         self.symbols = {name: value for name, (_, value) in zip(filtered, raw) if value}
@@ -98,6 +103,36 @@ class Binary:
             return None
         rotated = lambda w: ((w & 0xFF) >> ((w >> 8 & 0xF) * 2) | (w & 0xFF) << (32 - (w >> 8 & 0xF) * 2)) & 0xFFFFFFFF
         return self.plt.get(address + 8 + rotated(first) + rotated(second) + (third & 0xFFF))
+
+    def function_at(self, at):
+        """The (offset, size) of the exported function containing this file offset, or None."""
+        if self.symbols is None:
+            self._load_symbols()
+        address = self.to_address(at)
+        index = bisect.bisect_right(self.functions, (address, 1 << 32)) - 1
+        if index >= 0 and address < self.functions[index][0] + self.functions[index][1]:
+            return self.to_offset(self.functions[index][0]), self.functions[index][1]
+        return None
+
+    def calls(self, function, name):
+        """Where a function, as (offset, size), calls the imported function with this name."""
+        start, size = function
+        return [at for at in range(start, start + size - 2, 2)
+                if (target := blx_target(self, at)) is not None and self.plt_name(target & ~1) == name]
+
+    def runs_once(self, at):
+        """Whether this offset is in code that sets up a function-local static: after a call to
+        __cxa_guard_acquire and before the __cxa_guard_release that follows it. That code runs the
+        first time only, and what it works out is kept until Nickel restarts."""
+        function = self.function_at(at)
+        if not function:
+            return False
+        releases = self.calls(function, "__cxa_guard_release")
+        for acquire in self.calls(function, "__cxa_guard_acquire"):
+            release = min((r for r in releases if r > acquire), default=None)
+            if release is not None and acquire < at < release:
+                return True
+        return False
 
     def find_once(self, needle):
         first = self.data.find(needle)
@@ -313,6 +348,8 @@ def main():
     for patch in spec["patches"]:
         if patch.get("category") not in spec["categories"]:
             raise SystemExit(f"{patch['id']}: category has to be one of {', '.join(spec['categories'])}")
+        if patch.get("restart", False) not in (True, False):
+            raise SystemExit(f"{patch['id']}: restart has to be yes or no")
     folder = community_folder(spec["community_patches"]["ref"], spec["community_patches"]["version"])
     sources = {name: load_patches(folder, name) for name in FILES}
     out = REPO / "web/patches"
@@ -331,6 +368,7 @@ def main():
             "nickelBinSha256": hashlib.sha256(raw["nickel"]).hexdigest(),
         })
         result = {}
+        cached = []
         for patch in spec["patches"]:
             name = patch["file"]
             try:
@@ -345,8 +383,13 @@ def main():
                 for at, find, replace in edits
             ]
             targets[patch["id"]].setdefault(model, []).append(version)
-            print(f"  ok {patch['id']}: {len(edits)} edits")
+            # A change to code that runs once only shows when Nickel restarts, unless the mod can
+            # rebuild what it worked out.
+            if any(binaries[name].runs_once(at) for at, _, _ in edits):
+                cached.append(patch["id"])
+            print(f"  ok {patch['id']}: {len(edits)} edits{' (keeps a value: may need a restart)' if patch['id'] in cached else ''}")
         (out / f"{model}-{version}.json").write_text(json.dumps(result, indent=1) + "\n")
+        (out / f"{model}-{version}.cached.json").write_text(json.dumps(cached) + "\n")
     offered = []
     for patch in spec["patches"]:
         item = {"id": patch["id"], "kind": "patch", "category": patch["category"], "title": patch["title"], "description": patch["description"]}

@@ -7,6 +7,7 @@
 #
 # A patch has an id, title, description and one of the categories below, which set the order the
 # page shows them in. It can have a warning, and a group where only one in the group can be chosen.
+# Set restart: yes if Kobo Patcher on the Kobo can only make it take effect after a restart.
 # It sits in `file`, and its edits are one of these:
 #   community     the title of a patch in kobopatch-patches
 #   steps         edits that fit every firmware
