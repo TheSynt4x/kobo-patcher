@@ -36,6 +36,7 @@ static struct {
     char path[64];
     Got done;
     int tried_http;
+    int error; /* the last download's QNetworkReply::NetworkError */
     unsigned char *manifest;
     int manifest_size;
     char mod_hash[129];
@@ -63,7 +64,7 @@ static void finish(const char *text) {
 static void get(const char *path, Got done);
 
 static void finished(void *reply) {
-    int error = CALL(int (*)(void *), "_ZNK13QNetworkReply5errorEv")(reply);
+    int error = check.error = CALL(int (*)(void *), "_ZNK13QNetworkReply5errorEv")(reply);
     int *bytes;
     CALL(void (*)(int **, void *), "_ZN9QIODevice7readAllEv")(&bytes, reply);
     CALL(void (*)(void *), "_ZN7QObject11deleteLaterEv")(reply);
@@ -107,6 +108,12 @@ static void get(const char *path, Got done) {
 }
 
 /* ---- checking ---- */
+
+/* Qt numbers the errors where nothing was reached below 100, and the server's answers above. */
+static const char *unreachable(void) {
+    if (check.error && check.error < 100) return "Couldn't connect. Make sure Wi-Fi is on, then try again.";
+    return "There's nothing to check for updates from yet. Try again later.";
+}
 
 static void hex_of(const unsigned char *bytes, int size, char *out) {
     for (int i = 0; i < size; i++) sprintf(out + i * 2, "%02x", bytes[i]);
@@ -232,7 +239,7 @@ static void got_list(const unsigned char *data, int size) {
 static void got_signature(const unsigned char *data, int size) {
     unsigned char key[32], signature[64];
     char hex[130] = "";
-    if (!data) return finish("Couldn't check for updates. Make sure Wi-Fi is on, then try again.");
+    if (!data) return finish(unreachable());
     snprintf(hex, sizeof hex, "%.*s", size < 128 ? size : 128, (const char *)data);
     if (!unhex(UPDATE_KEY, key, 32) || !unhex(hex, signature, 64) ||
         crypto_ed25519_check(signature, key, check.manifest, check.manifest_size))
@@ -249,7 +256,7 @@ static void got_signature(const unsigned char *data, int size) {
 }
 
 static void got_manifest(const unsigned char *data, int size) {
-    if (!data) return finish("Couldn't check for updates. Make sure Wi-Fi is on, then try again.");
+    if (!data) return finish(unreachable());
     check.manifest = malloc(size + 1);
     memcpy(check.manifest, data, size);
     check.manifest[size] = 0;
