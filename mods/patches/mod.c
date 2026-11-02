@@ -1,71 +1,91 @@
 /* "Kobo Patcher" in Settings: every patch for this firmware, switched on and off straight away in
- * Nickel's memory. The firmware's files aren't changed. Choices are saved on the Kobo and made
- * again each time Nickel starts, before it has built anything. */
+ * Nickel's memory. The firmware's files aren't changed. The patch list is a file in .adds, so a new
+ * one arrives without reinstalling the mod, and it's read again whenever it changes. Choices are
+ * saved on the Kobo and made again each time Nickel starts, before it has built anything. */
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "../kit/nk.h"
 #include "live.h"
 
-#define CHOICES "/mnt/onboard/.adds/patches/choices.txt"
+#define FOLDER "/mnt/onboard/.adds/patches"
+#define CHOICES FOLDER "/choices.txt"
 #define CHOICES_TEMP CHOICES ".tmp"
-#define MAX_PATCHES 64
+#define MAX_PATCHES 256
+#define MAX_CHOICES 256
 #define GUARD_SECONDS 20
 
-enum { NO_CHOICE = -1 };
-
-static const Firmware *firmware;
+static char model[8] = "", version[32] = "unknown";
+static Firmware *firmware;
+static char list_error[160];
+static struct stat list_seen;
 static int ready;
-static int choices[MAX_PATCHES];
 static struct {
     int state;
     NkToggle *toggle;
 } rows[MAX_PATCHES];
 static int updating;
 
-/* .kobo/version is comma-separated: serial, kernel, firmware, ... The serial starts with the model.
- * The model's name is found even when its firmware isn't, so a Kobo after an update is still named. */
-static const Firmware *this_firmware(char *version, size_t size, const char **name) {
+/* .kobo/version is comma-separated: serial, kernel, firmware, ... The serial starts with the model. */
+static void this_kobo(void) {
     char line[256] = "";
     FILE *file = fopen("/mnt/onboard/.kobo/version", "r");
-    if (!file) return 0;
+    if (!file) return;
     fgets(line, sizeof line, file);
     fclose(file);
     char *kernel = strchr(line, ','), *field = kernel ? strchr(kernel + 1, ',') : 0;
-    if (!field) return 0;
+    if (!field) return;
     char *end = strchr(++field, ',');
     if (end) *end = 0;
-    snprintf(version, size, "%s", field);
-    for (size_t i = 0; i < sizeof firmwares / sizeof *firmwares; i++) {
-        if (strncmp(line, firmwares[i].model, 4)) continue;
-        *name = firmwares[i].name;
-        if (!strcmp(field, firmwares[i].version)) return &firmwares[i];
-    }
-    return 0;
+    snprintf(model, sizeof model, "%.4s", line);
+    snprintf(version, sizeof version, "%s", field);
 }
 
-/* ---- saved choices: one "id on" or "id off" line for each patch switched here ---- */
+/* ---- saved choices: an "id on" or "id off" line for each patch switched here ---- */
+
+/* Kept by id, apart from the list, so a new list that drops or reorders patches loses nothing. */
+static struct {
+    char id[64];
+    int on;
+} choices[MAX_CHOICES];
+static int choice_count;
 
 static void read_choices(void) {
-    for (int i = 0; i < MAX_PATCHES; i++) choices[i] = NO_CHOICE;
+    choice_count = 0;
     FILE *file = fopen(CHOICES, "r");
     if (!file) return;
-    char id[64], value[8];
-    while (fscanf(file, "%63s %7s", id, value) == 2)
-        for (int i = 0; i < firmware->patch_count; i++)
-            if (!strcmp(firmware->patches[i].id, id)) choices[i] = !strcmp(value, "on");
+    char value[8];
+    while (choice_count < MAX_CHOICES && fscanf(file, "%63s %7s", choices[choice_count].id, value) == 2) {
+        choices[choice_count].on = !strcmp(value, "on");
+        choice_count++;
+    }
     fclose(file);
+}
+
+/* 1 or 0 for a patch switched here, -1 for one that never was. */
+static int choice(const Patch *patch) {
+    for (int i = 0; i < choice_count; i++)
+        if (!strcmp(choices[i].id, patch->id)) return choices[i].on;
+    return -1;
+}
+
+static void choose(const Patch *patch, int on) {
+    int i = 0;
+    while (i < choice_count && strcmp(choices[i].id, patch->id)) i++;
+    if (i == MAX_CHOICES) return;
+    if (i == choice_count) snprintf(choices[choice_count++].id, sizeof choices[i].id, "%s", patch->id);
+    choices[i].on = on;
 }
 
 static void save_choices(void) {
     mkdir("/mnt/onboard/.adds", 0755);
-    mkdir("/mnt/onboard/.adds/patches", 0755);
+    mkdir(FOLDER, 0755);
     FILE *file = fopen(CHOICES_TEMP, "w");
     if (!file) return nk_log("couldn't save choices");
-    for (int i = 0; i < firmware->patch_count; i++)
-        if (choices[i] != NO_CHOICE) fprintf(file, "%s %s\n", firmware->patches[i].id, choices[i] ? "on" : "off");
+    for (int i = 0; i < choice_count; i++) fprintf(file, "%s %s\n", choices[i].id, choices[i].on ? "on" : "off");
     fflush(file);
     fsync(fileno(file));
     fclose(file);
@@ -77,8 +97,38 @@ static void apply_choices(void) {
     int restart = 0;
     for (int on = 0; on < 2; on++)
         for (int i = 0; i < firmware->patch_count; i++)
-            if (choices[i] == on && live_state(&firmware->patches[i]) != (on ? ON : OFF))
+            if (choice(&firmware->patches[i]) == on && live_state(&firmware->patches[i]) != (on ? ON : OFF))
                 live_set(&firmware->patches[i], on, &restart);
+}
+
+/* ---- the patch list ---- */
+
+static void list_path(char *path, size_t size) { snprintf(path, size, FOLDER "/lists/%s-%s.txt", model, version); }
+
+/* Reads the list again if the file has changed since it was last read, and makes the saved
+ * choices for any patches that are new to it. A list that can't be read leaves the last one. */
+static void load_list(void) {
+    char path[128];
+    struct stat now;
+    list_path(path, sizeof path);
+    if (stat(path, &now)) {
+        if (!firmware) snprintf(list_error, sizeof list_error, "there's no patch list for this firmware");
+        return;
+    }
+    if (firmware && now.st_mtime == list_seen.st_mtime && now.st_size == list_seen.st_size) return;
+    list_seen = now;
+    Firmware *loaded = list_load(path, list_error, sizeof list_error);
+    if (loaded && (strcmp(loaded->model, model) || strcmp(loaded->version, version) || loaded->patch_count > MAX_PATCHES)) {
+        snprintf(list_error, sizeof list_error, "the patch list is for another Kobo or firmware");
+        list_free(loaded);
+        loaded = 0;
+    }
+    if (!loaded) return nk_log("patch list not read: %s", list_error);
+    list_free(firmware);
+    firmware = loaded;
+    list_error[0] = 0;
+    nk_log("read %d patches for %s %s", firmware->patch_count, model, version);
+    if (ready) apply_choices();
 }
 
 /* ---- the screen ---- */
@@ -109,7 +159,7 @@ static void change(int i, int on) {
         for (int k = 0; k < firmware->patch_count; k++)
             if (rows[k].state == ON && same_group(patch, &firmware->patches[k]) && live_set(&firmware->patches[k], 0, &restart)) {
                 rows[k].state = OFF;
-                choices[k] = 0;
+                choose(&firmware->patches[k], 0);
                 if (rows[k].toggle) set_quietly(k, 0);
             }
     if (!live_set(patch, on, &restart)) {
@@ -118,7 +168,7 @@ static void change(int i, int on) {
         return;
     }
     rows[i].state = on ? ON : OFF;
-    choices[i] = on;
+    choose(patch, on);
     save_choices();
     live_refresh();
     if (restart)
@@ -141,14 +191,14 @@ static void toggled(void *row) {
 }
 
 static void build(NkScreen *screen, void *unused) {
-    char version[32] = "unknown";
-    const char *name = "Unknown model";
-    this_firmware(version, sizeof version, &name);
+    load_list();
     memset(rows, 0, sizeof rows);
     nk_section(screen, "THIS KOBO");
-    nk_value_row(screen, name, version);
+    nk_value_row(screen, firmware ? firmware->name : *model ? model : "Unknown model", version);
     if (!firmware) {
-        nk_text(screen, "There are no patches for this firmware yet.");
+        char text[256];
+        snprintf(text, sizeof text, "No patches yet: %s. Patches for your Kobo can be added from kobo.thesynt4x.dev.", list_error);
+        nk_text(screen, text);
         return;
     }
     if (!ready) {
@@ -179,14 +229,9 @@ static void build(NkScreen *screen, void *unused) {
 static void open_patches(void *unused) { nk_open_screen("Kobo Patcher", "Settings", build, 0); }
 
 void nk_mod_init(void) {
-    char version[32] = "unknown";
-    const char *name = "unknown model";
-    firmware = this_firmware(version, sizeof version, &name);
-    if (!firmware) nk_log("no patches for %s on %s", name, version);
-    if (firmware && firmware->patch_count <= MAX_PATCHES && live_init(firmware)) {
-        ready = 1;
-        read_choices();
-        apply_choices();
-    }
+    this_kobo();
+    read_choices();
+    ready = live_init(version);
+    load_list();
     nk_settings_row("Kobo Patcher", open_patches, 0);
 }

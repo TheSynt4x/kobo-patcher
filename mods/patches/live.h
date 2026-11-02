@@ -2,13 +2,13 @@
 #ifndef LIVE_H
 #define LIVE_H
 
-#include "patches_data.h"
+#include "list.h"
 
 enum { OFF, ON, UNKNOWN };
 
-/* Call once from nk_mod_init. Returns 0 if this firmware lacks something it needs, and then
- * nothing else here may be used. */
-int live_init(const Firmware *firmware);
+/* Call once from nk_mod_init with the firmware's version. Returns 0 if this firmware lacks
+ * something it needs, and then nothing else here may be used. */
+int live_init(const char *version);
 
 /* Whether the patch's bytes in memory are Kobo's, the patch's, or neither. */
 int live_state(const Patch *patch);

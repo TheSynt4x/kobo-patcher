@@ -265,6 +265,7 @@ int live_set(const Patch *patch, int on, int *restart) {
         free_sheet(before[i]);
         free_sheet(after);
     }
+    if (patch->restart) *restart = 1;
     if (edits_function(patch, "_ZNK15ReadingSettings17lineHeightScalarsEv") && !rebuild_line_spacings()) *restart = 1;
     if (!on && edits_function(patch, "_ZN12HomePageView17configureTopRightE15HomePageWidgets") && fixups() < 0) *restart = 1;
     nk_log("%s: %s", patch->id, live_state(patch) == ON ? "on" : "off");
@@ -307,7 +308,7 @@ void live_refresh(void) {
     if (home_controller) CALL(void (*)(void *), "_ZN18HomePageController16configureWidgetsEv")(home_controller);
 }
 
-int live_init(const Firmware *firmware) {
+int live_init(const char *version) {
     static const char *const symbols[] = {
         "_ZN10QArrayData10deallocateEPS_jj", "_ZN9QListData7disposeEPNS_4DataE", "_ZNK11QMetaObject9classNameEv",
         "_ZN12QApplication10allWidgetsEv", "_Z11qUncompressPKhi", "_ZN7QString15fromUtf8_helperEPKci", "_ZeqRK7QStringS1_",
@@ -319,7 +320,7 @@ int live_init(const Firmware *firmware) {
     for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
         if (!nk_sym(symbols[i])) found = 0;
     if (!found) return 0;
-    firmware_version = firmware->version;
+    firmware_version = version;
     dl_iterate_phdr(find_libnickel, 0);
     real_home_controller = nk_hook("_ZN18HomePageControllerC1EbP7QObject", hooked_home_controller);
     if (fixups() < 0) nk_log("no fixups for this firmware: some patches will need a restart");

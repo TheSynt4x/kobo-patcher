@@ -4,11 +4,13 @@
 patches:
 	python3 tools/compile_patches.py
 
-# Build the mods the page offers into web/mods. Needs zig, and Python with PyYAML.
+# Build the mods the page offers into web/mods, with the patch list for each firmware in
+# web/mods/lists. Needs zig, and Python with PyYAML.
 mods:
 	sh mods/build.sh patches
 	mkdir -p web/mods
 	cp mods/build/libpatches.so web/mods/
+	python3 tools/write_lists.py
 
 # Add a patch written in kobopatch's format: make add FILE=my-patch.yaml
 add:
