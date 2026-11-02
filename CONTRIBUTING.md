@@ -58,6 +58,8 @@ Then run `make patches`. It lists which patches don't fit, and those just won't 
 
 Google Drive and Dropbox aren't compiled like the others. To offer them on your firmware, add `google_drive: true` or `dropbox: true` to the entry once you've tested it.
 
+The Patches mod gets a list for every firmware here, so Kobos that already have it pick up the new patches when they check for updates. The page only offers the mod, and the mod only updates itself, on firmware with `mod: true`. Add it once you've installed the mod on a real Kobo with that firmware, and switched a few patches on and off in Kobo Patcher.
+
 ## Can't do either?
 
 If your firmware's missing, [ask for it](https://github.com/TheSynt4x/kobo-patcher/issues/new?template=firmware.yml). Offering to test helps a lot.
