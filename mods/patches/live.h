@@ -4,16 +4,17 @@
 
 #include "list.h"
 
-enum { OFF, ON, UNKNOWN };
+enum { OFF, ON, UNKNOWN, PARTLY };
 
 /* Call once from nk_mod_init with the firmware's version. Returns 0 if this firmware lacks
  * something it needs, and then nothing else here may be used. */
 int live_init(const char *version);
 
-/* Whether the patch's bytes in memory are Kobo's, the patch's, or neither. */
+/* Whether the patch's bytes in memory are Kobo's, the patch's, or neither. PARTLY is some edits
+ * each way, as an older version of the patch with fewer edits leaves the files. */
 int live_state(const Patch *patch);
 
-/* Writes the patch's bytes, after checking every edit's current bytes are the other side's.
+/* Writes the patch's bytes, after checking every edit's current bytes are one side's or the other's.
  * Returns 0 if they weren't, and then nothing was changed. Sets *restart when Nickel has already
  * used something the patch changes and won't look again until it restarts. */
 int live_set(const Patch *patch, int on, int *restart);

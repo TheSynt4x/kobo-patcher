@@ -1,6 +1,6 @@
 // The patching logic behind index.html, with no page code so Node can test it.
 
-import { FIRMWARE, KOREADER, MODEL_NAMES, NICKELMENU, REGISTRY } from "./supported.js";
+import { FIRMWARE, KOREADER, MODEL_NAMES, REGISTRY } from "./supported.js";
 
 const NICKEL_PATH = "./usr/local/Kobo/libnickel.so.1.0.0";
 const NICKEL_BIN_PATH = "./usr/local/Kobo/nickel";
@@ -28,8 +28,6 @@ const DRIVE_SETTINGS = [
 export const SUPPORTED = Object.fromEntries(
   FIRMWARE.filter((build) => build.nickelSha256).map((build) => [build.nickelSha256, build]),
 );
-
-const KOREADER_MENU = "menu_item:main:KOReader:cmd_spawn:quiet:exec /mnt/onboard/.adds/koreader/koreader.sh\n";
 
 const PATCH_CODE = {
   "google-drive": { apply: patchDriveCheck, settings: DRIVE_SETTINGS },
@@ -200,25 +198,6 @@ async function knownRelease(file, releases, name) {
     throw new Refused(`this isn't a supported ${name} file. Supported: ${releases.map((r) => r.version).join(", ")}`);
   }
   return { release, bytes };
-}
-
-// The official KoboRoot.tgz, as a list of files to merge into the one package a Kobo installs.
-export async function readNickelMenu(file) {
-  const { release, bytes } = await knownRelease(file, NICKELMENU, "NickelMenu");
-  const gunzip = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  const tar = new Uint8Array(await new Response(gunzip).arrayBuffer());
-  const files = [];
-  for (let at = 0; at + 512 <= tar.length && tar[at] !== 0;) {
-    const header = tar.subarray(at, at + 512);
-    const size = parseInt(tarText(header, 124, 12).trim() || "0", 8);
-    files.push({
-      path: tarText(header, 0, 100),
-      mode: parseInt(tarText(header, 100, 8).trim(), 8),
-      data: tar.slice(at + 512, at + 512 + size),
-    });
-    at += 512 + Math.ceil(size / 512) * 512;
-  }
-  return { version: release.version, files };
 }
 
 export async function readKOReader(file) {
@@ -656,10 +635,9 @@ function systemFiles(firmware) {
 // mods: [{ id, data, sha256 }] to add. remove.mods: ids to remove the next time Nickel starts.
 // mod: { list: { name, text }, choices: { id: on } } for Kobo Patcher to switch those patches on the
 // Kobo, from its list in .adds/patches/lists, instead of them going into the system files.
-export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = null, edits = {}, remove = null, mods = [], mod = null } = {}) {
+export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null } = {}) {
   const chosen = PATCHES.filter((patch) => patchIds.includes(patch.id));
   if (chosen.length && !firmware) throw new Refused("patches need the firmware file");
-  if (koreader && !nickelmenu) throw new Refused("KOReader's menu entry needs NickelMenu");
   const files = [];
   if (firmware) {
     const current = { [NICKEL_PATH]: firmware.libnickel, [NICKEL_BIN_PATH]: firmware.nickel };
@@ -676,7 +654,6 @@ export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = nu
     }
     files.push(...systemFiles({ libnickel: current[NICKEL_PATH], nickel: current[NICKEL_BIN_PATH] }));
   }
-  if (nickelmenu) files.push(...nickelmenu.files);
   for (const each of mods) files.push({ path: modPath(each.id), data: each.data, mode: 0o755 });
   const storage = [];
   if (mod) {
@@ -690,7 +667,6 @@ export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = nu
     storage,
     koreader,
     remove,
-    installsNickelMenu: !!nickelmenu,
     installsMods: mods.map((mod) => mod.id),
     record: recordChange(firmware ? patchIds : null, mods, remove?.mods ?? []),
   };
@@ -739,9 +715,6 @@ async function copyKOReader(root, koreader, progress) {
     if (done % 25 === 0 || done === koreader.entries.length) progress(`Copying KOReader: ${done} of ${koreader.entries.length} files…`);
   }
   await cleanMacFiles(await adds.getDirectoryHandle("koreader"), true);
-  const nm = await adds.getDirectoryHandle("nm", { create: true });
-  await writeFile(nm, "koreader", encoder.encode(KOREADER_MENU));
-  await cleanMacFiles(nm);
 }
 
 async function removeAddons(root, remove) {
@@ -766,6 +739,7 @@ async function removeFromAdds(adds, remove) {
   if (remove.koreader) await adds.removeEntry("koreader", { recursive: true });
   if (!await dirExists(adds, "nm")) return;
   const nm = await adds.getDirectoryHandle("nm");
+  // The menu entry this page used to add for KOReader, before Kobo Patcher put it in More.
   if (remove.koreader && await exists(nm, "koreader")) await nm.removeEntry("koreader");
   // NickelMenu removes itself when it finds this file on the next restart.
   if (remove.nickelmenu) await writeFile(nm, "uninstall", new Uint8Array(0));
@@ -853,14 +827,6 @@ export async function writeToKobo(root, plan, progress = () => {}) {
   const dot = await root.getDirectoryHandle(".kobo");
   const koboDir = await dot.getDirectoryHandle("Kobo");
   const packageBytes = plan.files.length ? await buildPackage(plan.files) : null;
-  if (plan.installsNickelMenu && await dirExists(root, ".adds")) {
-    // A leftover from removing it earlier would make the new install remove itself on restart.
-    const adds = await root.getDirectoryHandle(".adds");
-    if (await dirExists(adds, "nm")) {
-      const nm = await adds.getDirectoryHandle("nm");
-      if (await exists(nm, "uninstall")) await nm.removeEntry("uninstall");
-    }
-  }
   for (const id of plan.installsMods ?? []) {
     // A leftover from removing it earlier would make the new install remove itself on restart.
     if (!await dirExists(root, ".adds")) break;

@@ -17,6 +17,7 @@ export const FIRMWARE = [
     "name": "Kobo Libra Colour",
     "firmware": "4.46.23852",
     "url": "https://ereaderfiles.kobo.com/firmwares/kobo13/Oct2026/kobo-update-4.46.23852.zip",
+    "mod": true,
     "sizeMB": 162,
     "nickelSha256": "d5c04fb1bee4ec9b4e06d974d1f73c213b16f52387d2ba8fba56a678b6b378fc",
     "nickelBinSha256": "5aaa04c2add60c8d926b100b81f85507f746e38e2a0f8ba0d04956971ce34791"

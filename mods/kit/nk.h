@@ -77,4 +77,8 @@ int nk_replace_self(const void *data, unsigned size);
 /* Restart the Kobo the way Kobo does. */
 void nk_reboot(void);
 
+/* Run a shell command on its own, outside Nickel and from /, the way NickelMenu's cmd_spawn does. The crash
+ * guard is stopped first, since the command may well stop Nickel. */
+void nk_spawn(const char *command);
+
 #endif

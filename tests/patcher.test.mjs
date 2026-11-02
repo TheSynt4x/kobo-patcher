@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
   PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
-  listIds, readNickel, readNickelMenu, setConf, sha256, writeToKobo,
+  listIds, readNickel, setConf, sha256, writeToKobo,
 } from "../web/patcher.js";
 import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
 
@@ -127,7 +127,7 @@ test("the registry only offers items on firmware it can support", () => {
   assert.deepEqual(planUndo(null, {}).files, []);
   // A mod is only offered where its build has run on a real Kobo.
   const mods = REGISTRY.filter((item) => item.kind === "mod");
-  assert.deepEqual(mods.map((mod) => [mod.id, mod.targets]), [["patches", { N306: ["4.38.23852"] }]]);
+  assert.deepEqual(mods.map((mod) => [mod.id, mod.targets]), [["patches", { N306: ["4.38.23852"], N428: ["4.46.23852"] }]]);
   assert.equal(CATEGORIES[0], "Mods");
 });
 
@@ -149,37 +149,33 @@ test("a Kobo on firmware we don't have is refused with what to ask for", async (
 });
 
 test("add-on files that aren't a known release are refused", async () => {
-  await assert.rejects(readNickelMenu(new Blob(["not it"])), Refused);
   await assert.rejects(readKOReader(new Blob(["not it"])), Refused);
 });
 
 test("a package can merge several files, and only holds what was chosen", async () => {
   const path = fakeFirmware("merge.zip", "98B5012100AF");
   const nickel = await readNickel(await openAsBlob(path));
-  const nickelmenu = { files: [
-    { path: "./usr/local/Kobo/imageformats/libnm.so", mode: 0o755, data: new Uint8Array(600).fill(1) },
-    { path: "./mnt/onboard/.adds/nm/doc", mode: 0o644, data: new Uint8Array(5).fill(2) },
-  ] };
-  const onlyMenu = planPatch(null, [], { nickelmenu });
-  assert.deepEqual(onlyMenu.files.map((f) => f.path), nickelmenu.files.map((f) => f.path));
-  assert.deepEqual(onlyMenu.settings, []);
-  assert.equal(onlyMenu.record, null);
+  const mods = [{ id: "patches", data: new Uint8Array(600).fill(1), sha256: "abc" }];
+  const onlyMod = planPatch(null, [], { mods });
+  assert.deepEqual(onlyMod.files.map((f) => f.path), ["./usr/local/Kobo/imageformats/libpatches.so"]);
+  assert.deepEqual(onlyMod.settings, []);
+  assert.deepEqual(onlyMod.record, { mods: { patches: "abc" } });
   assert.throws(() => planPatch(null, ["google-drive"]), Refused);
-  assert.throws(() => planPatch(null, [], { koreader: {} }), Refused);
+  // KOReader no longer needs NickelMenu: Kobo Patcher starts it from More.
+  assert.deepEqual(planPatch(null, [], { koreader: {} }).files, []);
   assert.equal(planUndo({ libnickel: nickel }, {}).files[0].data, nickel);
   assert.deepEqual(planPatch({ libnickel: nickel }, []).record, { patches: [], mods: {} });
 
-  const both = planPatch({ libnickel: nickel }, ["google-drive"], { nickelmenu });
+  const both = planPatch({ libnickel: nickel }, ["google-drive"], { mods });
   writeFileSync(join(work, "merged.tgz"), await buildPackage(both.files, MTIME));
   const listed = python(`
 import tarfile
 with tarfile.open(sys.argv[1]) as tar:
     for m in tar.getmembers():
         print(m.name, oct(m.mode), m.size, m.uid)
-    assert tar.extractfile("./mnt/onboard/.adds/nm/doc").read() == bytes([2]) * 5`, join(work, "merged.tgz"));
+    assert tar.extractfile("./usr/local/Kobo/imageformats/libpatches.so").read() == bytes([1]) * 600`, join(work, "merged.tgz"));
   assert.equal(listed.trim(), `${NICKEL} 0o775 ${nickel.length} 0
-./usr/local/Kobo/imageformats/libnm.so 0o755 600 0
-./mnt/onboard/.adds/nm/doc 0o644 5 0`);
+./usr/local/Kobo/imageformats/libpatches.so 0o755 600 0`);
 });
 
 async function zipToDisk(path, entries, limit) {

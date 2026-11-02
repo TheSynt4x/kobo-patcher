@@ -26,14 +26,6 @@ export function firmwareSearchUrl(name, firmware) {
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
-export const NICKELMENU = [
-  {
-    version: "0.6.0",
-    sha256: "322ff9aa863860e8f5f7e0b55cae561c54bf95983b9bce1d19819d1225d064af",
-    url: "https://github.com/pgaskin/NickelMenu/releases/download/v0.6.0/KoboRoot.tgz",
-  },
-];
-
 export const KOREADER = [
   {
     version: "2026.07.1",
@@ -42,15 +34,13 @@ export const KOREADER = [
   },
 ];
 
-// Add-ons don't touch system files, so they're offered on all firmware we know.
-const ALL_FIRMWARE = {};
 const DRIVE_FIRMWARE = {};
 const DROPBOX_FIRMWARE = {};
 // A mod is only offered where its build has run on a real Kobo, marked mod: true in patches.yaml.
-// The mod updates itself on the same firmware.
+// The mod updates itself on the same firmware. KOReader is started from its row in More, so it's
+// offered on the same firmware too.
 const PATCHES_MOD_FIRMWARE = {};
 for (const { model, firmware, google_drive: drive, dropbox, mod } of FIRMWARE) {
-  (ALL_FIRMWARE[model] ??= []).push(firmware);
   if (drive) (DRIVE_FIRMWARE[model] ??= []).push(firmware);
   if (dropbox) (DROPBOX_FIRMWARE[model] ??= []).push(firmware);
   if (mod) (PATCHES_MOD_FIRMWARE[model] ??= []).push(firmware);
@@ -94,20 +84,12 @@ export const REGISTRY = [
   },
   ...COMPILED_PATCHES,
   {
-    id: "nickelmenu",
-    kind: "addon",
-    category: "Add-ons",
-    title: "NickelMenu",
-    description: "Adds a menu button to the bottom bar of the home screen.",
-    targets: ALL_FIRMWARE,
-  },
-  {
     id: "koreader",
     kind: "addon",
     category: "Add-ons",
     title: "KOReader",
-    description: "Copies KOReader to the Kobo and adds it to the NickelMenu button. Needs NickelMenu, and takes a few minutes.",
-    targets: ALL_FIRMWARE,
+    description: "Copies KOReader to the Kobo, and Kobo Patcher adds it to the More page. Needs Kobo Patcher, and takes a few minutes.",
+    targets: PATCHES_MOD_FIRMWARE,
   },
 ].sort((a, b) => categoryOrder(a) - categoryOrder(b));
 

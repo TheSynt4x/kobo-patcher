@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include "nk.h"
@@ -552,6 +553,23 @@ void nk_reboot(void) {
     failsafe_stop();
     void *power = CALL(void *(*)(void), "_ZN22N3PowerWorkflowManager14sharedInstanceEv")();
     CALL(void (*)(void *), "_ZN22N3PowerWorkflowManager6rebootEv")(power);
+}
+
+/* Forked twice, so init takes the command and Nickel is left no child to wait for. Between fork
+ * and exec only async-signal-safe calls are made, since Nickel has other threads. */
+void nk_spawn(const char *command) {
+    failsafe_stop();
+    pid_t child = fork();
+    if (child == 0) {
+        if (fork() != 0) _exit(0);
+        setsid();
+        if (chdir("/")) _exit(127);
+        for (int fd = 3; fd < 1024; fd++) close(fd);
+        execl("/bin/sh", "sh", "-c", command, (char *)0);
+        _exit(127);
+    }
+    if (child > 0) waitpid(child, 0, 0);
+    else nk_log("couldn't start %s", command);
 }
 
 static void get_title(QStr *out, void *self) { *out = qstr(screen.title); }

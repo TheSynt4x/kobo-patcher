@@ -64,10 +64,12 @@ int live_state(const Patch *patch) {
     for (int i = 0; i < patch->edit_count; i++) {
         const unsigned char *at = address_of(&patch->edits[i], 0);
         if (!at) return UNKNOWN;
-        on = on && matches(at, patch->edits[i].replace);
-        off = off && matches(at, patch->edits[i].find);
+        int edit_on = matches(at, patch->edits[i].replace), edit_off = matches(at, patch->edits[i].find);
+        if (!edit_on && !edit_off) return UNKNOWN;
+        on = on && edit_on;
+        off = off && edit_off;
     }
-    return on ? ON : off ? OFF : UNKNOWN;
+    return on ? ON : off ? OFF : PARTLY;
 }
 
 static int write_bytes(unsigned char *at, const unsigned char *bytes, size_t length, int prot) {
@@ -178,6 +180,7 @@ static const struct {
     unsigned home_top_right;
 } known[] = {
     {"4.38.23852", 0xa1a409, 0x16f977c, 0x16f9780, 0x38},
+    {"4.46.23852", 0xa3ee45, 0x17489d8, 0x17489dc, 0x38},
 };
 
 static const char *firmware_version;
@@ -242,7 +245,7 @@ static int rebuild_line_spacings(void) {
 int live_set(const Patch *patch, int on, int *restart) {
     for (int i = 0; i < patch->edit_count; i++) {
         const unsigned char *at = address_of(&patch->edits[i], 0);
-        if (!at || !matches(at, on ? patch->edits[i].find : patch->edits[i].replace)) {
+        if (!at || !(matches(at, patch->edits[i].find) || matches(at, patch->edits[i].replace))) {
             nk_log("%s: bytes aren't as expected, not changing it", patch->id);
             return 0;
         }

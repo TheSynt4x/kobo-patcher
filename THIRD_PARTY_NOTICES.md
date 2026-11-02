@@ -22,4 +22,4 @@ The MIT licence in `LICENSE` doesn't cover Kobo's own code. The files in `web/pa
 
 ## Add-ons
 
-The page installs [NickelMenu](https://github.com/pgaskin/NickelMenu) (MIT) and [KOReader](https://github.com/koreader/koreader) (AGPL-3.0) from release files you download yourself. Neither is included here.
+The page installs [KOReader](https://github.com/koreader/koreader) (AGPL-3.0) from a release file you download yourself. It isn't included here. The page can also remove [NickelMenu](https://github.com/pgaskin/NickelMenu) (MIT), which it used to install.

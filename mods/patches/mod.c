@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "../kit/nk.h"
+#include "koreader.h"
 #include "live.h"
 #include "update.h"
 
@@ -152,7 +153,7 @@ static void read_states(void) {
     for (int i = 0; i < firmware->patch_count; i++) rows[i].state = live_state(&firmware->patches[i]);
     for (int i = 0; i < firmware->patch_count; i++)
         for (int k = 0; k < firmware->patch_count; k++)
-            if (rows[i].state == UNKNOWN && rows[k].state == ON && same_group(&firmware->patches[i], &firmware->patches[k])) rows[i].state = OFF;
+            if (rows[i].state == UNKNOWN && (rows[k].state == ON || rows[k].state == PARTLY) && same_group(&firmware->patches[i], &firmware->patches[k])) rows[i].state = OFF;
 }
 
 static void set_quietly(int i, int on) {
@@ -169,7 +170,7 @@ static void change(int i, int on) {
     nk_failsafe(GUARD_SECONDS);
     if (on)
         for (int k = 0; k < firmware->patch_count; k++)
-            if (rows[k].state == ON && same_group(patch, &firmware->patches[k]) && live_set(&firmware->patches[k], 0, &restart)) {
+            if ((rows[k].state == ON || rows[k].state == PARTLY) && same_group(patch, &firmware->patches[k]) && live_set(&firmware->patches[k], 0, &restart)) {
                 rows[k].state = OFF;
                 choose(&firmware->patches[k], 0);
                 if (rows[k].toggle) set_quietly(k, 0);
@@ -244,6 +245,7 @@ static void build(NkScreen *screen, void *unused) {
             const Patch *patch = &firmware->patches[i];
             if (strcmp(patch->category, category)) continue;
             /* Bytes that match neither side belong to something else, so they're left alone. */
+            /* PARTLY shows as off, so turning it on finishes it. */
             if (rows[i].state == UNKNOWN) nk_value_row(screen, patch->title, "Changed");
             else rows[i].toggle = nk_toggle_row(screen, patch->title, rows[i].state == ON, toggled, (void *)(long)i);
         }
@@ -259,4 +261,5 @@ void nk_mod_init(void) {
     ready = live_init(version);
     load_list();
     nk_settings_row("Kobo Patcher", open_patches, 0);
+    koreader_init();
 }
