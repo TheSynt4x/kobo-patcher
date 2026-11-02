@@ -17,6 +17,13 @@ void nk_log(const char *fmt, ...);
 void *nk_sym(const char *name);
 int nk_ok(void);
 
+/* Connect a Qt signal, given by its mangled name and its class's staticMetaObject, to fn(arg). */
+void nk_connect(void *sender, const char *signal, const char *meta, NkFn fn, void *arg);
+
+/* Disable the mod if Nickel crashes in the next few seconds. Startup is covered already; call this
+ * before changing anything Nickel will run. Calling it again extends the time. */
+void nk_failsafe(int seconds);
+
 /* Replace a function that libnickel calls. Returns the original, or 0 if it can't. */
 void *nk_hook(const char *symbol, void *replacement);
 

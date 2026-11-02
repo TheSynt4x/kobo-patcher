@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include "nk.h"
 
@@ -157,6 +158,8 @@ static void connect_to(void *sender, const char *signal, const char *meta, NkFn 
         &connection, sender, signal_ptr, sender, no_slot, slot, 0, 0, static_meta);
 }
 
+void nk_connect(void *sender, const char *signal, const char *meta, NkFn fn, void *arg) { connect_to(sender, signal, meta, fn, arg); }
+
 /* ---- hooking ---- */
 
 /* libnickel calls its own exported functions through its GOT, so changing an entry there
@@ -208,8 +211,8 @@ void *nk_hook(const char *symbol, void *replacement) {
     return hook.original;
 }
 
-static void failsafe_arm(void);
-static void failsafe_clear(void);
+static void guard_screen(void);
+static void unguard_screen(void);
 
 /* ---- the More row ---- */
 
@@ -435,7 +438,10 @@ void nk_error(const char *title, const char *text) {
     CALL(void *(*)(QStr *, QStr *), "_ZN25ConfirmationDialogFactory15showErrorDialogERK7QStringS2_")(&heading, &body);
 }
 
+static void failsafe_stop(void);
+
 void nk_reboot(void) {
+    failsafe_stop();
     void *power = CALL(void *(*)(void), "_ZN22N3PowerWorkflowManager14sharedInstanceEv")();
     CALL(void (*)(void *), "_ZN22N3PowerWorkflowManager6rebootEv")(power);
 }
@@ -493,9 +499,9 @@ void nk_open_screen(const char *title, const char *small_title, void (*build)(Nk
     controller[2] = new_abstract;
     void *window = CALL(void *(*)(void), "_ZN20MainWindowController14sharedInstanceEv")();
     /* Opening a screen is the riskiest thing a mod does, so a crash here disables it too. */
-    failsafe_arm();
+    guard_screen();
     CALL(void (*)(void *, void *, int), "_ZN20MainWindowController4pushEP18AbstractControllerb")(window, controller + 2, 0);
-    failsafe_clear();
+    unguard_screen();
 }
 
 /* ---- loading, as an image-format plugin ---- */
@@ -519,11 +525,65 @@ __attribute__((visibility("default"))) void *qt_plugin_instance(void) { return 0
 static void failsafe_arm(void) { rename(INSTALLED_AT, DISABLED_AT); sync(); }
 static void failsafe_clear(void) { rename(DISABLED_AT, INSTALLED_AT); sync(); }
 
-static void *failsafe_after_startup(void *unused) {
-    sleep(FAILSAFE_SECONDS);
-    failsafe_clear();
-    nk_log("failsafe cleared");
-    return 0;
+static pthread_mutex_t failsafe_lock = PTHREAD_MUTEX_INITIALIZER;
+static long failsafe_until; /* while this is set, a thread clears the guard once it's passed */
+
+static long now(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec;
+}
+
+static void *failsafe_wait(void *unused) {
+    for (;;) {
+        pthread_mutex_lock(&failsafe_lock);
+        long left = failsafe_until - now();
+        if (left <= 0) {
+            failsafe_until = 0;
+            failsafe_clear();
+            pthread_mutex_unlock(&failsafe_lock);
+            nk_log("failsafe cleared");
+            return 0;
+        }
+        pthread_mutex_unlock(&failsafe_lock);
+        sleep(left);
+    }
+}
+
+void nk_failsafe(int seconds) {
+    pthread_mutex_lock(&failsafe_lock);
+    if (!failsafe_until) {
+        failsafe_arm();
+        pthread_t thread;
+        pthread_create(&thread, 0, failsafe_wait, 0);
+        pthread_detach(thread);
+    }
+    if (now() + seconds > failsafe_until) failsafe_until = now() + seconds;
+    pthread_mutex_unlock(&failsafe_lock);
+}
+
+/* A restart Nickel chooses isn't a crash, so it mustn't disable the mod. A crash or abort never
+ * runs atexit handlers, so those are still caught. */
+static void failsafe_stop(void) {
+    pthread_mutex_lock(&failsafe_lock);
+    if (failsafe_until) {
+        failsafe_until = 0;
+        failsafe_clear();
+    }
+    pthread_mutex_unlock(&failsafe_lock);
+}
+
+/* A screen opening while the guard is already timed leaves the guard to its thread. */
+static void guard_screen(void) {
+    pthread_mutex_lock(&failsafe_lock);
+    if (!failsafe_until) failsafe_arm();
+    pthread_mutex_unlock(&failsafe_lock);
+}
+
+static void unguard_screen(void) {
+    pthread_mutex_lock(&failsafe_lock);
+    if (!failsafe_until) failsafe_clear();
+    pthread_mutex_unlock(&failsafe_lock);
 }
 
 __attribute__((constructor)) static void load(void) {
@@ -536,10 +596,8 @@ __attribute__((constructor)) static void load(void) {
         nk_log("uninstalled");
         return;
     }
-    failsafe_arm();
-    pthread_t thread;
-    pthread_create(&thread, 0, failsafe_after_startup, 0);
-    pthread_detach(thread);
+    nk_failsafe(FAILSAFE_SECONDS);
+    atexit(failsafe_stop);
     nk_log("loaded");
     nk_mod_init();
 }

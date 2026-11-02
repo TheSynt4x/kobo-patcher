@@ -37,7 +37,7 @@ make serve
 
 Open http://localhost:8765 in Chrome or Edge, patch your Kobo, and check it did what you expected. Then open a pull request, and commit the changes to `patches.yaml` and `web/patches/`.
 
-The page only offers the Patches mod once `make mods` has built it into `web/mods/`, which needs zig. The site builds it when it deploys, so don't commit it. The mod has the patch list built in, so a new patch reaches it when the site next deploys.
+The page only offers the Patches mod once `make mods` has built it into `web/mods/`, which needs zig. The site builds it when it deploys, so don't commit it. The mod has the patch list built in, so a new patch reaches it when the site next deploys. The mod switches patches straight away; if yours only shows after a restart, see "The Patches mod" in `mods/README.md`.
 
 A patch that needs different bytes on each firmware goes in `patches.yaml` by hand, under `per_firmware`. The `no-discover` patch is an example.
 
