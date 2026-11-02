@@ -281,6 +281,81 @@ void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon
     real_more_view = nk_hook("_ZN8MoreViewC1EP7QWidget", hooked_more_view);
 }
 
+/* ---- the Settings row ---- */
+
+static struct {
+    const char *title;
+    NkFn open;
+    void *arg;
+} settings_row;
+static void *(*real_settings_view)(void *, void *);
+
+static void *find_named_deep(void *parent, const char *name) {
+    void **kids;
+    int count = children(parent, &kids);
+    char found[64];
+    for (int i = 0; i < count; i++) {
+        object_name(kids[i], found, sizeof found);
+        if (!strcmp(found, name)) return kids[i];
+        void *deeper = find_named_deep(kids[i], name);
+        if (deeper) return deeper;
+    }
+    return 0;
+}
+
+static int inherits(void *object, const char *name) {
+    void **vtable = *(void ***)object;
+    return ((void *(*)(void *, const char *))vtable[1])(object, name) != 0; /* qt_metacast */
+}
+
+/* Where a widget is in a PagingContainer's QList<QPointer<QWidget>>, at +0x2c. Each item is a
+ * QPointer: its refcount data, then the widget. -1 if it's not there or the list looks wrong. */
+static int paging_index(void *paging, void *widget) {
+    int *list = *(int **)((char *)paging + 0x2c);
+    if (!list || list[0] < 1 || list[2] < 0 || list[3] < list[2] || list[3] > list[1] || list[3] - list[2] > 64) return -1;
+    for (int i = list[2]; i < list[3]; i++) {
+        void **pointer = ((void ***)(list + 4))[i];
+        if (pointer && pointer[1] == widget) return i - list[2];
+    }
+    return -1;
+}
+
+/* Kobo's Settings rows are a TouchLabel subclass with no constructor of its own: Ui_N3SettingsView
+ * makes a TouchLabel and sets these vtable pointers. They're copied from Device information. The
+ * new row goes first, where it's easy to find, and Device information's place checks the list. */
+static const int settings_row_vptrs[] = {0, 2, 8, 0x13, 0x16};
+
+static void *hooked_settings_view(void *view, void *parent) {
+    void *result = real_settings_view(view, parent);
+    void *paging = CALL(void *(*)(void *), "_ZNK14N3SettingsView15pagingContainerEv")(view);
+    void **model = paging ? find_named_deep(paging, "deviceInformation") : 0;
+    if (!model || !inherits(model, "TouchLabel") || paging_index(paging, model) < 0) {
+        nk_log("Settings isn't what's expected, leaving it alone");
+        return result;
+    }
+    void **row = alloc(0x84);
+    CALL(void (*)(void *, void *, int), "_ZN10TouchLabelC1EP7QWidget6QFlagsIN2Qt10WindowTypeEE")(row, paging, 0);
+    for (size_t i = 0; i < sizeof settings_row_vptrs / sizeof *settings_row_vptrs; i++) row[settings_row_vptrs[i]] = model[settings_row_vptrs[i]];
+    set_name(row, "nkSettingsRow");
+    QStr text = qstr(settings_row.title);
+    CALL(void (*)(void *, QStr *), "_ZN6QLabel7setTextERK7QString")(row, &text);
+    CALL(void (*)(void *, int, void *), "_ZN15PagingContainer12insertWidgetEiP7QWidget")(paging, 0, row);
+    connect_to(row, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", settings_row.open, settings_row.arg);
+    nk_log("settings row added");
+    return result;
+}
+
+void nk_settings_row(const char *title, NkFn open, void *arg) {
+    if (!all_symbols_present()) {
+        nk_log("this firmware is missing something, not adding the row");
+        return;
+    }
+    settings_row.title = title;
+    settings_row.open = open;
+    settings_row.arg = arg;
+    real_settings_view = nk_hook("_ZN14N3SettingsViewC1EP7QWidget", hooked_settings_view);
+}
+
 /* ---- screens ---- */
 
 /* Screens reuse N3SettingsLoggingCategoryController and its view, a bare paged settings page
@@ -324,6 +399,18 @@ static void learn_labels(void) {
     learn_label(view, "RegularLabel", LABEL_TEXT);
     learn_label(view, "RegularLabelVPadded", LABEL_ROW);
     CALL(void (*)(void *), "_ZN7QObject11deleteLaterEv")(view);
+    /* The italic label, for values, is in Kobo's icon rows. */
+    if (!italic_label_vptr[0]) {
+        void *button = alloc(0x58);
+        CALL(void (*)(void *, void *), "_ZN14IconLeftButtonC1EP7QWidget")(button, 0);
+        void *inner = find_class(button, "GenericContainerWidget");
+        void **italic = inner ? find_class(inner, "RegularItalicLabel") : 0;
+        if (italic) {
+            italic_label_vptr[0] = italic[0];
+            italic_label_vptr[1] = italic[2];
+        }
+        CALL(void (*)(void *), "_ZN7QObject11deleteLaterEv")(button);
+    }
 }
 
 static void *label(void *parent, void *vptrs[2], const char *text) {

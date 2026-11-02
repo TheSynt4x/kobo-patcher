@@ -31,6 +31,10 @@ void *nk_hook(const char *symbol, void *replacement);
  * open(arg). Call from nk_mod_init. If this firmware lacks anything the kit needs, there's no row. */
 void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg);
 
+/* Add a row at the top of Kobo's Settings list, styled like Kobo's own. Tapping it
+ * runs open(arg). Call from nk_mod_init. If Settings isn't laid out as expected, there's no row. */
+void nk_settings_row(const char *title, NkFn open, void *arg);
+
 /* Open a settings-style screen. build(screen, arg) fills it in when it opens; pages and the close
  * button come with the screen. */
 void nk_open_screen(const char *title, const char *small_title, void (*build)(NkScreen *, void *), void *arg);

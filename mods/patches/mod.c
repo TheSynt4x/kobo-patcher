@@ -1,4 +1,4 @@
-/* "Patches" on the More page: every patch for this firmware, switched on and off straight away in
+/* "Kobo Patcher" in Settings: every patch for this firmware, switched on and off straight away in
  * Nickel's memory. The firmware's files aren't changed. Choices are saved on the Kobo and made
  * again each time Nickel starts, before it has built anything. */
 #define _GNU_SOURCE
@@ -176,11 +176,7 @@ static void build(NkScreen *screen, void *unused) {
     updating--;
 }
 
-static void open_patches(void *unused) { nk_open_screen("Patches", "More", build, 0); }
-
-static const unsigned char icon[] = {
-#include "icon.inc"
-};
+static void open_patches(void *unused) { nk_open_screen("Kobo Patcher", "Settings", build, 0); }
 
 void nk_mod_init(void) {
     char version[32] = "unknown";
@@ -192,5 +188,5 @@ void nk_mod_init(void) {
         read_choices();
         apply_choices();
     }
-    nk_more_row("Patches", icon, sizeof icon, open_patches, 0);
+    nk_settings_row("Kobo Patcher", open_patches, 0);
 }

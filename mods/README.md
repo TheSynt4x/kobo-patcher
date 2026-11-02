@@ -34,7 +34,7 @@ A crash after a screen has opened isn't caught.
 
 ## The Patches mod
 
-It switches patches on and off in Nickel's memory, straight away, and never changes the firmware's files. Each patch's edits are found in libnickel or the nickel program as Nickel has loaded them, and every edit's bytes are checked before any are written. Bytes that match neither side of a patch show as "Changed" and are left alone.
+It adds "Kobo Patcher" at the top of Settings, like other apps' patchers do, and switches patches on and off in Nickel's memory, straight away, and never changes the firmware's files. Each patch's edits are found in libnickel or the nickel program as Nickel has loaded them, and every edit's bytes are checked before any are written. Bytes that match neither side of a patch show as "Changed" and are left alone.
 
 Choices are saved in `/mnt/onboard/.adds/patches/choices.txt`, one `id on` or `id off` line for each patch switched on the Kobo, and made again when Nickel starts, before it has built anything. Patches that were never switched there stay as the files have them, so a Kobo patched the old way still works.
 
