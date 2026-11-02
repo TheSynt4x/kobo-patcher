@@ -1,8 +1,14 @@
-.PHONY: patches add test serve
+.PHONY: patches mods add test serve
 
 # Compile patches.yaml into web/patches, downloading what it needs the first time.
 patches:
 	python3 tools/compile_patches.py
+
+# Build the mods the page offers into web/mods. Needs zig, and Python with PyYAML.
+mods:
+	sh mods/build.sh patches
+	mkdir -p web/mods
+	cp mods/build/libpatches.so web/mods/
 
 # Add a patch written in kobopatch's format: make add FILE=my-patch.yaml
 add:

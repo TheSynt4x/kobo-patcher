@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
   PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
-  readNickel, readNickelMenu, setConf, sha256,
+  readNickel, readNickelMenu, setConf, sha256, writeToKobo,
 } from "../web/patcher.js";
 import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
 
@@ -125,6 +125,10 @@ test("the registry only offers items on firmware it can support", () => {
   }
   assert.deepEqual(registryFor("N428", "4.38.23852"), []);
   assert.deepEqual(planUndo(null, {}).files, []);
+  // A mod is only offered where its build has run on a real Kobo.
+  const mods = REGISTRY.filter((item) => item.kind === "mod");
+  assert.deepEqual(mods.map((mod) => [mod.id, mod.targets]), [["patches", { N306: ["4.38.23852"] }]]);
+  assert.equal(CATEGORIES[0], "Mods");
 });
 
 test("every item has a category, and items are in category order", () => {
@@ -163,7 +167,7 @@ test("a package can merge several files, and only holds what was chosen", async 
   assert.throws(() => planPatch(null, ["google-drive"]), Refused);
   assert.throws(() => planPatch(null, [], { koreader: {} }), Refused);
   assert.equal(planUndo({ libnickel: nickel }, {}).files[0].data, nickel);
-  assert.deepEqual(planPatch({ libnickel: nickel }, []).record, []);
+  assert.deepEqual(planPatch({ libnickel: nickel }, []).record, { patches: [], mods: {} });
 
   const both = planPatch({ libnickel: nickel }, ["google-drive"], { nickelmenu });
   writeFileSync(join(work, "merged.tgz"), await buildPackage(both.files, MTIME));
@@ -338,4 +342,142 @@ test("the Dropbox patch changes only its check on the real firmware, and works a
   const settings = both.settings.map(([, key]) => key);
   assert.ok(settings.includes("googledrive_link_account_start") && settings.includes("dropbox_link_account_poll"));
   assert.throws(() => patchDropboxCheck(patched), Refused);
+});
+
+// A drive in memory, with the parts of the File System Access API the page uses.
+class FakeDir {
+  kind = "directory";
+  children = new Map();
+
+  async getDirectoryHandle(name, { create } = {}) {
+    return this.child(name, create, FakeDir);
+  }
+
+  async getFileHandle(name, { create } = {}) {
+    return this.child(name, create, FakeFile);
+  }
+
+  child(name, create, Kind) {
+    if (!this.children.has(name) && create) this.children.set(name, new Kind());
+    const child = this.children.get(name);
+    if (!child) throw new DOMException(name, "NotFoundError");
+    if (!(child instanceof Kind)) throw new DOMException(name, "TypeMismatchError");
+    return child;
+  }
+
+  async removeEntry(name) {
+    if (!this.children.delete(name)) throw new DOMException(name, "NotFoundError");
+  }
+
+  async* entries() {
+    yield* [...this.children];
+  }
+}
+
+class FakeFile {
+  kind = "file";
+  data = new Uint8Array(0);
+
+  async getFile() {
+    return new File([this.data], "file");
+  }
+
+  async createWritable() {
+    const parts = [];
+    return {
+      write: async (data) => parts.push(data),
+      close: async () => { this.data = new Uint8Array(await new Blob(parts).arrayBuffer()); },
+    };
+  }
+}
+
+const NIA_VERSION = "N306000000000,4.1.15,4.38.23852,4.1.15,4.1.15,x";
+
+async function fakeKobo(files) {
+  const root = new FakeDir();
+  for (const [path, text] of Object.entries({ ".kobo/version": NIA_VERSION, ".kobo/Kobo/Kobo eReader.conf": "[x]\n", ...files })) {
+    const parts = path.split("/");
+    const name = parts.pop();
+    let dir = root;
+    for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
+    (await dir.getFileHandle(name, { create: true })).data = new TextEncoder().encode(text);
+  }
+  return root;
+}
+
+async function readFake(root, path) {
+  const parts = path.split("/");
+  const name = parts.pop();
+  try {
+    let dir = root;
+    for (const part of parts) dir = await dir.getDirectoryHandle(part);
+    return (await dir.getFileHandle(name)).data;
+  } catch {
+    return null;
+  }
+}
+
+const readRecord = async (root) => JSON.parse(new TextDecoder().decode(await readFake(root, ".adds/kobo-patcher.json")));
+const MOD = { id: "patches", data: new Uint8Array(300).fill(7), sha256: "abc" };
+
+test("a mod installs without the firmware, and a firmware update keeps it but not the patches", async () => {
+  // Left behind by removing it before, including macOS's copy.
+  const kobo = await fakeKobo({ ".adds/patches/uninstall": "", ".adds/patches/._uninstall": "x" });
+  assert.deepEqual((await inspectKobo(kobo)).installed.mods, {});
+  const plan = planPatch(null, [], { mods: [MOD] });
+  assert.deepEqual(plan.record, { mods: { patches: "abc" } });
+  await writeToKobo(kobo, plan);
+
+  writeFileSync(join(work, "mod.tgz"), await readFake(kobo, ".kobo/KoboRoot.tgz"));
+  assert.equal(python(`
+import tarfile
+with tarfile.open(sys.argv[1]) as tar:
+    for m in tar.getmembers():
+        print(m.name, oct(m.mode), m.size, m.uid)`, join(work, "mod.tgz")).trim(),
+  "./usr/local/Kobo/imageformats/libpatches.so 0o755 300 0");
+  // Otherwise the mod would remove itself on its first start.
+  assert.equal(await readFake(kobo, ".adds/patches/uninstall"), null);
+  assert.equal(await readFake(kobo, ".adds/patches/._uninstall"), null);
+  assert.deepEqual(await readRecord(kobo), { firmware: "4.38.23852", patches: [], mods: { patches: "abc" } });
+  await assert.rejects(inspectKobo(kobo), /already waiting/);
+
+  // Kobo installs the package, and later a firmware update puts its own files back.
+  await (await kobo.getDirectoryHandle(".kobo")).removeEntry("KoboRoot.tgz");
+  const older = { firmware: "4.38.1", patches: ["margins"], mods: { patches: "abc" } };
+  (await (await kobo.getDirectoryHandle(".adds")).getFileHandle("kobo-patcher.json")).data = new TextEncoder().encode(JSON.stringify(older));
+  const { installed } = await inspectKobo(kobo);
+  assert.deepEqual([installed.patches, installed.mods], [[], { patches: "abc" }]);
+});
+
+test("removing a mod leaves its uninstall file and keeps the patches, and Undo removes it too", async () => {
+  const record = JSON.stringify({ firmware: "4.38.23852", patches: ["margins"], mods: { patches: "abc" } });
+  let kobo = await fakeKobo({ ".adds/kobo-patcher.json": record });
+  const plan = planPatch(null, [], { remove: { mods: ["patches"] } });
+  assert.deepEqual(plan.files, []);
+  await writeToKobo(kobo, plan);
+  assert.ok(await readFake(kobo, ".adds/patches/uninstall"));
+  assert.equal(await readFake(kobo, ".kobo/KoboRoot.tgz"), null);
+  assert.deepEqual(await readRecord(kobo), { firmware: "4.38.23852", patches: ["margins"], mods: {} });
+
+  // Undo without the firmware leaves the patches alone.
+  kobo = await fakeKobo({ ".adds/kobo-patcher.json": record });
+  await writeToKobo(kobo, planUndo(null, (await inspectKobo(kobo)).installed));
+  assert.ok(await readFake(kobo, ".adds/patches/uninstall"));
+  assert.deepEqual((await readRecord(kobo)).patches, ["margins"]);
+
+  // With it, nothing the page added is left, so neither is the record.
+  kobo = await fakeKobo({ ".adds/kobo-patcher.json": record });
+  const firmware = { libnickel: new Uint8Array(10), nickel: new Uint8Array(10) };
+  await writeToKobo(kobo, planUndo(firmware, (await inspectKobo(kobo)).installed));
+  assert.ok(await readFake(kobo, ".adds/patches/uninstall"));
+  assert.equal(await readFake(kobo, ".adds/kobo-patcher.json"), null);
+  assert.ok(await readFake(kobo, ".kobo/KoboRoot.tgz"));
+});
+
+test("a record from before mods were offered still reads", async () => {
+  const kobo = await fakeKobo({ ".adds/kobo-patcher.json": JSON.stringify({ firmware: "4.38.23852", patches: ["margins"] }) });
+  const { installed } = await inspectKobo(kobo);
+  assert.deepEqual([installed.patches, installed.mods], [["margins"], {}]);
+  await writeToKobo(kobo, planPatch(null, [], { mods: [MOD] }));
+  assert.deepEqual(await readRecord(kobo), { firmware: "4.38.23852", patches: ["margins"], mods: { patches: "abc" } });
 });

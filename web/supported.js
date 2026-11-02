@@ -6,7 +6,7 @@ import { COMPILED_PATCHES, FIRMWARE, PATCH_CATEGORIES } from "./patches/compiled
 export { FIRMWARE };
 
 // The page's sections, in order. Patch categories are set in patches.yaml.
-export const CATEGORIES = [...PATCH_CATEGORIES, "Add-ons"];
+export const CATEGORIES = ["Mods", ...PATCH_CATEGORIES, "Add-ons"];
 
 // Names for the model codes in .kobo/version.
 export const MODEL_NAMES = Object.fromEntries(FIRMWARE.map(({ model, name }) => [model, name]));
@@ -52,11 +52,27 @@ for (const { model, firmware, google_drive: drive, dropbox } of FIRMWARE) {
   if (dropbox) (DROPBOX_FIRMWARE[model] ??= []).push(firmware);
 }
 
-// Every patch and add-on, and the model and firmware versions it's offered on.
-// "patch" items change Kobo's system files. "addon" items install from their own release file.
+// A mod is only offered where its build has run on a real Kobo.
+const PATCHES_MOD_FIRMWARE = { N306: ["4.38.23852"] };
+
+// Every patch, mod and add-on, and the model and firmware versions it's offered on.
+// "patch" items change Kobo's system files. "mod" items add a library this site builds, from
+// mods/ in its source. "addon" items install from their own release file.
 const categoryOrder = (item) => CATEGORIES.indexOf(item.category);
 
 export const REGISTRY = [
+  {
+    id: "patches",
+    kind: "mod",
+    category: "Mods",
+    title: "Patches on your Kobo",
+    tag: "Experimental",
+    description: "Adds a Patches page under More, to turn these patches on and off on the Kobo itself. "
+      + "Patching from this page starts again from Kobo's original files, so it replaces changes made there.",
+    warning: "Tested on one Kobo Nia. Use it at your own risk.",
+    file: "mods/libpatches.so",
+    targets: PATCHES_MOD_FIRMWARE,
+  },
   {
     id: "google-drive",
     kind: "patch",

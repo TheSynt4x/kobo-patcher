@@ -5,6 +5,8 @@ import { FIRMWARE, KOREADER, MODEL_NAMES, NICKELMENU, REGISTRY } from "./support
 const NICKEL_PATH = "./usr/local/Kobo/libnickel.so.1.0.0";
 const NICKEL_BIN_PATH = "./usr/local/Kobo/nickel";
 const RECORD = "kobo-patcher.json";
+// Nickel loads every Qt plugin here, which is how a mod starts.
+const modPath = (id) => `./usr/local/Kobo/imageformats/lib${id}.so`;
 const DRIVE_CHECK = "_ZNK6Device19supportsGoogleDriveEv";
 const DROPBOX_CHECK = "_ZNK6Device15supportsDropboxEv";
 const CHECK_START = [0x98, 0xb5, 0x01, 0x21, 0x00, 0xaf];
@@ -588,22 +590,14 @@ export async function inspectKobo(root) {
   }
   let adds = null;
   if (await dirExists(root, ".adds")) adds = await root.getDirectoryHandle(".adds");
-  let patches = [];
-  if (adds && await exists(adds, RECORD)) {
-    try {
-      const record = JSON.parse(new TextDecoder().decode(await readFile(adds, RECORD)));
-      // A firmware update puts the original files back, so an older record no longer applies.
-      if (record.firmware === version.firmware) patches = record.patches;
-    } catch {
-      patches = [];
-    }
-  }
+  const record = adds ? await readRecord(adds, version.firmware) : { patches: [], mods: {} };
   const installed = {
     // An empty nm folder is what's left after NickelMenu uninstalls itself.
     nickelmenu: !!adds && await dirExists(adds, "nm")
       && await exists(await adds.getDirectoryHandle("nm"), "doc")
       && !await exists(await adds.getDirectoryHandle("nm"), "uninstall"),
-    patches,
+    patches: record.patches,
+    mods: record.mods,
     koreader: !!adds && await dirExists(adds, "koreader"),
   };
   return { ...version, name, build, installed };
@@ -636,7 +630,8 @@ function systemFiles(firmware) {
 // Works everything out before writing anything, so a patch that doesn't fit leaves the Kobo alone.
 // Pass the firmware only to change patches: both system files are rebuilt from its originals, so
 // a patch that's no longer chosen goes away. Without it the system files aren't touched.
-export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = null, edits = {}, remove = null } = {}) {
+// mods: [{ id, data, sha256 }] to add. remove.mods: ids to remove the next time Nickel starts.
+export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = null, edits = {}, remove = null, mods = [] } = {}) {
   const chosen = PATCHES.filter((patch) => patchIds.includes(patch.id));
   if (chosen.length && !firmware) throw new Refused("patches need the firmware file");
   if (koreader && !nickelmenu) throw new Refused("KOReader's menu entry needs NickelMenu");
@@ -657,24 +652,38 @@ export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = nu
     files.push(...systemFiles({ libnickel: current[NICKEL_PATH], nickel: current[NICKEL_BIN_PATH] }));
   }
   if (nickelmenu) files.push(...nickelmenu.files);
+  for (const mod of mods) files.push({ path: modPath(mod.id), data: mod.data, mode: 0o755 });
   return {
     settings: chosen.flatMap((patch) => patch.settings),
     files,
     koreader,
     remove,
     installsNickelMenu: !!nickelmenu,
-    record: firmware ? patchIds : null,
+    installsMods: mods.map((mod) => mod.id),
+    record: recordChange(firmware ? patchIds : null, mods, remove?.mods ?? []),
   };
+}
+
+// What to change in the record: patches only when they were rebuilt, and each mod added or removed.
+function recordChange(patches, added, removed) {
+  const mods = Object.fromEntries([
+    ...removed.map((id) => [id, null]),
+    ...added.map((mod) => [mod.id, mod.sha256]),
+  ]);
+  if (!patches && !Object.keys(mods).length) return null;
+  return { ...(patches && { patches }), mods };
 }
 
 // Removes what the page can add, and puts Kobo's original system files back if given the firmware.
 export function planUndo(firmware, installed) {
+  const mods = Object.keys(installed.mods ?? {});
   return {
     settings: [],
     files: firmware ? systemFiles(firmware) : [],
     koreader: null,
-    remove: installed,
-    record: firmware ? [] : null,
+    remove: { ...installed, mods },
+    installsMods: [],
+    record: recordChange(firmware ? [] : null, [], mods),
   };
 }
 
@@ -703,8 +712,15 @@ async function copyKOReader(root, koreader, progress) {
 }
 
 async function removeAddons(root, remove) {
-  const adds = await root.getDirectoryHandle(".adds");
+  const adds = await root.getDirectoryHandle(".adds", { create: true });
   await removeFromAdds(adds, remove);
+  for (const id of remove.mods ?? []) {
+    // The mod removes itself, and this file, when it finds this on the next start.
+    const dir = await adds.getDirectoryHandle(id, { create: true });
+    await writeFile(dir, "uninstall", new Uint8Array(0));
+    await cleanMacFiles(dir);
+    if (!await exists(dir, "uninstall")) throw new Refused(`couldn't leave the ${id} mod's uninstall file on the Kobo`);
+  }
   if (remove.koreader && await dirExists(adds, "koreader")) {
     throw new Refused("KOReader's folder is still on the Kobo after removing it");
   }
@@ -768,11 +784,32 @@ export async function readBackup(root) {
   ]);
 }
 
+// The page can't see /usr/local over USB, so it keeps its own note of what it put there.
+async function readRecord(adds, firmware) {
+  let record = {};
+  if (await exists(adds, RECORD)) {
+    try {
+      record = JSON.parse(new TextDecoder().decode(await readFile(adds, RECORD)));
+    } catch {
+      record = {};
+    }
+  }
+  return {
+    // A firmware update puts the original files back, so older patches no longer apply.
+    patches: record.firmware === firmware && Array.isArray(record.patches) ? record.patches : [],
+    // But it only adds files, so a mod stays.
+    mods: record.mods && typeof record.mods === "object" ? record.mods : {},
+  };
+}
+
 // Package last: the Kobo installs it on eject, and by then everything else has to be in place.
-async function saveRecord(root, version, patches) {
+async function saveRecord(root, firmware, change) {
   const adds = await root.getDirectoryHandle(".adds", { create: true });
-  if (patches.length) {
-    await writeFile(adds, RECORD, encoder.encode(JSON.stringify({ firmware: version, patches })));
+  const before = await readRecord(adds, firmware);
+  const patches = change.patches ?? before.patches;
+  const mods = Object.fromEntries(Object.entries({ ...before.mods, ...change.mods }).filter(([, sha]) => sha));
+  if (patches.length || Object.keys(mods).length) {
+    await writeFile(adds, RECORD, encoder.encode(JSON.stringify({ firmware, patches, mods })));
   } else if (await exists(adds, RECORD)) {
     await adds.removeEntry(RECORD);
   }
@@ -791,8 +828,17 @@ export async function writeToKobo(root, plan, progress = () => {}) {
       if (await exists(nm, "uninstall")) await nm.removeEntry("uninstall");
     }
   }
+  for (const id of plan.installsMods ?? []) {
+    // A leftover from removing it earlier would make the new install remove itself on restart.
+    if (!await dirExists(root, ".adds")) break;
+    const adds = await root.getDirectoryHandle(".adds");
+    if (!await dirExists(adds, id)) continue;
+    const dir = await adds.getDirectoryHandle(id);
+    if (await exists(dir, "uninstall")) await dir.removeEntry("uninstall");
+    await cleanMacFiles(dir);
+  }
   if (plan.koreader) await copyKOReader(root, plan.koreader, progress);
-  const removing = plan.remove?.koreader || plan.remove?.nickelmenu;
+  const removing = plan.remove?.koreader || plan.remove?.nickelmenu || !!plan.remove?.mods?.length;
   if (!plan.files.length && !plan.koreader && !plan.settings.length && !removing) {
     throw new Refused("there's nothing to change, so nothing was written");
   }

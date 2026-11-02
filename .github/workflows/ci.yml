@@ -32,6 +32,13 @@ jobs:
       - run: make test
         env:
           REQUIRE_FIRMWARE: "1"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Build the mods
+        run: |
+          make mods
+          sha256sum web/mods/*
 
   deploy:
     needs: test
@@ -40,6 +47,18 @@ jobs:
     concurrency: deploy
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      # The same zig as the build that was tested on a Kobo.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Build the mods
+        run: |
+          make mods
+          sha256sum web/mods/*
       - name: Set up SSH
         env:
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
