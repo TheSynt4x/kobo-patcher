@@ -39,7 +39,7 @@ jobs:
       - name: Build the mods
         run: |
           make mods
-          sha256sum web/mods/*
+          sha256sum web/mods/libpatches.so web/mods/lists/*
 
   deploy:
     needs: test
