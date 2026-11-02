@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include "../kit/nk.h"
 #include "live.h"
+#include "update.h"
 
 #define FOLDER "/mnt/onboard/.adds/patches"
 #define CHOICES FOLDER "/choices.txt"
@@ -190,14 +191,19 @@ static void toggled(void *row) {
     change(i, on);
 }
 
+static NkLabel *update_status;
+
+static void check_tapped(void *unused) { update_check(update_status, model, version, load_list); }
+
 static void build(NkScreen *screen, void *unused) {
     load_list();
     memset(rows, 0, sizeof rows);
     nk_section(screen, "THIS KOBO");
     nk_value_row(screen, firmware ? firmware->name : *model ? model : "Unknown model", version);
+    update_status = nk_button_row(screen, "New patches and Kobo Patcher", "Check", check_tapped, 0);
     if (!firmware) {
         char text[256];
-        snprintf(text, sizeof text, "No patches yet: %s. Patches for your Kobo can be added from kobo.thesynt4x.dev.", list_error);
+        snprintf(text, sizeof text, "No patches yet: %s. Connect to Wi-Fi and tap Check, or add them from kobo.thesynt4x.dev.", list_error);
         nk_text(screen, text);
         return;
     }

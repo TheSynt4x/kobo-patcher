@@ -46,14 +46,15 @@ export const KOREADER = [
 const ALL_FIRMWARE = {};
 const DRIVE_FIRMWARE = {};
 const DROPBOX_FIRMWARE = {};
-for (const { model, firmware, google_drive: drive, dropbox } of FIRMWARE) {
+// A mod is only offered where its build has run on a real Kobo, marked mod: true in patches.yaml.
+// The mod updates itself on the same firmware.
+const PATCHES_MOD_FIRMWARE = {};
+for (const { model, firmware, google_drive: drive, dropbox, mod } of FIRMWARE) {
   (ALL_FIRMWARE[model] ??= []).push(firmware);
   if (drive) (DRIVE_FIRMWARE[model] ??= []).push(firmware);
   if (dropbox) (DROPBOX_FIRMWARE[model] ??= []).push(firmware);
+  if (mod) (PATCHES_MOD_FIRMWARE[model] ??= []).push(firmware);
 }
-
-// A mod is only offered where its build has run on a real Kobo.
-const PATCHES_MOD_FIRMWARE = { N306: ["4.38.23852"] };
 
 // Every patch, mod and add-on, and the model and firmware versions it's offered on.
 // "patch" items change Kobo's system files. "mod" items add a library this site builds, from

@@ -48,6 +48,9 @@ jobs:
     concurrency: deploy
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -56,10 +59,14 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
-      - name: Build the mods
+      # Kobo Patcher only takes updates signed with this key. It's an Ed25519 key in PEM.
+      - name: Build and sign the mods
+        env:
+          KOBO_PATCHER_SIGNING_KEY: ${{ secrets.KOBO_PATCHER_SIGNING_KEY }}
         run: |
           make mods
-          sha256sum web/mods/*
+          node tools/sign_mods.mjs --require
+          sha256sum web/mods/* web/mods/lists/*
       - name: Set up SSH
         env:
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}

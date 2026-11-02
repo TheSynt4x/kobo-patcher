@@ -4,6 +4,7 @@
 # A firmware needs its model code (the first 4 characters of the serial in .kobo/version), the
 # model's name, its version and its download link. The hashes are worked out for you. Set
 # google_drive or dropbox to offer that patch there, once you've tested it, because they aren't compiled.
+# Set mod: true once the Patches mod has been tried on that firmware on a real Kobo.
 #
 # A patch has an id, title, description and one of the categories below, which set the order the
 # page shows them in. It can have a warning, and a group where only one in the group can be chosen.
@@ -24,6 +25,7 @@ firmware:
     url: https://ereaderfiles.kobo.com/firmwares/kobo7/Oct2026/kobo-update-4.38.23852.zip
     google_drive: true
     dropbox: true
+    mod: true
   - model: N428
     name: Kobo Libra Colour
     firmware: "4.46.23852"

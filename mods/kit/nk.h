@@ -67,6 +67,13 @@ void nk_confirm(const char *title, const char *text, const char *accept, const c
 /* Kobo's error dialog. */
 void nk_error(const char *title, const char *text);
 
+/* Where the mod's file is now: moved aside while the crash guard is on, and back afterwards. */
+const char *nk_self_path(void);
+
+/* Replace the mod's file with a new build, taking effect when Nickel next starts. The crash guard
+ * is stopped first so it can't put the old file back. Returns 0 if nothing was changed. */
+int nk_replace_self(const void *data, unsigned size);
+
 /* Restart the Kobo the way Kobo does. */
 void nk_reboot(void);
 

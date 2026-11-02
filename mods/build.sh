@@ -7,6 +7,6 @@ name="$1"
 for generator in "$name"/gen_*.py; do [ -f "$generator" ] && python3 "$generator"; done
 mkdir -p build
 grep -o '"_Z[^"]*"' kit/nk.c | sort -u | sed 's/$/,/' > build/symbols.inc
-zig cc -target arm-linux-gnueabihf.2.17 -mcpu=cortex_a7 -Os -fno-sanitize=all -fno-unwind-tables -fno-asynchronous-unwind-tables -g0 -shared -fPIC \
+zig cc -target arm-linux-gnueabihf.2.17 -mcpu=cortex_a7 -Os -fvisibility=hidden -ffunction-sections -fdata-sections -Wl,--gc-sections -fno-sanitize=all -fno-unwind-tables -fno-asynchronous-unwind-tables -g0 -shared -fPIC \
   -Wl,-z,norelro -Wl,-z,lazy -Wl,--hash-style=sysv -w -DNK_NAME="\"$name\"" \
-  -Ibuild -o "build/lib$name.so" kit/nk.c "$name"/*.c -ldl -lpthread
+  -Ibuild -o "build/lib$name.so" kit/nk.c "$name"/*.c $(ls "$name"/vendor/*.c 2>/dev/null) -ldl -lpthread

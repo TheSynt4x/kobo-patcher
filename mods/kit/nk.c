@@ -527,6 +527,27 @@ void nk_error(const char *title, const char *text) {
 
 static void failsafe_stop(void);
 
+const char *nk_self_path(void) { return access(INSTALLED_AT, F_OK) == 0 ? INSTALLED_AT : DISABLED_AT; }
+
+/* Written beside the old file and renamed over it, so a lost write leaves the old one. Nickel keeps
+ * running the old copy it already loaded. */
+int nk_replace_self(const void *data, unsigned size) {
+    failsafe_stop();
+    int fd = open(INSTALLED_AT ".new", O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0) return 0;
+    int ok = write(fd, data, size) == (ssize_t)size;
+    ok = !fsync(fd) && ok;
+    close(fd);
+    if (!ok || rename(INSTALLED_AT ".new", INSTALLED_AT)) {
+        unlink(INSTALLED_AT ".new");
+        return 0;
+    }
+    unlink(DISABLED_AT);
+    sync();
+    nk_log("replaced with a new build");
+    return 1;
+}
+
 void nk_reboot(void) {
     failsafe_stop();
     void *power = CALL(void *(*)(void), "_ZN22N3PowerWorkflowManager14sharedInstanceEv")();

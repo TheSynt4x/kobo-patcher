@@ -38,6 +38,10 @@ It adds "Kobo Patcher" at the top of Settings, like other apps' patchers do, and
 
 The patch list is a file, `/mnt/onboard/.adds/patches/lists/<model>-<firmware>.txt`, written by `tools/write_lists.py`. It's read when Nickel starts and again whenever Kobo Patcher opens and the file has changed, so new patches arrive without reinstalling the mod. Every line is checked, and edits may only touch libnickel and the nickel program.
 
+"New patches and Kobo Patcher" checks for updates over Wi-Fi, through Qt's own network code. It downloads `mods/manifest.txt` from the site, which `tools/sign_mods.mjs` signs with an Ed25519 key, and refuses it unless the signature matches `UPDATE_KEY` in `update.c` ([Monocypher](patches/vendor/README.md) checks it). Every other file has to match the SHA-512 and size the manifest gives it. A new patch list is saved straight away. A new mod is only offered on the firmware the manifest names, the ones marked `mod: true` in `patches.yaml`, and installs with a restart. Because of the signature, a TLS error is ignored, and plain HTTP is tried if TLS can't be used at all.
+
+To test without a cable, run `make mods` and `make serve LAN=1`, and put the address it prints in `.adds/patches/update-url` on the Kobo. Check then updates from your computer. Only builds signed with the key are taken, so this needs the key in `~/.config/kobo-patcher/signing-key.pem`.
+
 Choices are saved in `/mnt/onboard/.adds/patches/choices.txt`, one `id on` or `id off` line for each patch switched on the Kobo, and made again when Nickel starts, before it has built anything. Patches that were never switched there stay as the files have them, so a Kobo patched the old way still works.
 
 Most patches change code Nickel runs again whenever it's needed. For the rest, `live.c` gives the nudge Nickel itself would:
