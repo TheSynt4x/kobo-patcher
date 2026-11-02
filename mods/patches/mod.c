@@ -64,8 +64,9 @@ static void read_states(void) {
             if (rows[i].state == UNKNOWN && rows[k].state == ON && same_group(&firmware->patches[i], &firmware->patches[k])) rows[i].state = OFF;
 }
 
-/* .kobo/version is comma-separated: serial, kernel, firmware, ... The serial starts with the model. */
-static const Firmware *this_firmware(char *version, size_t size) {
+/* .kobo/version is comma-separated: serial, kernel, firmware, ... The serial starts with the model.
+ * The model's name is found even when its firmware isn't, so a Kobo after an update is still named. */
+static const Firmware *this_firmware(char *version, size_t size, const char **name) {
     char line[256] = "";
     FILE *file = fopen("/mnt/onboard/.kobo/version", "r");
     if (!file) return 0;
@@ -76,8 +77,11 @@ static const Firmware *this_firmware(char *version, size_t size) {
     char *end = strchr(++field, ',');
     if (end) *end = 0;
     snprintf(version, size, "%s", field);
-    for (size_t i = 0; i < sizeof firmwares / sizeof *firmwares; i++)
-        if (!strncmp(line, firmwares[i].model, 4) && !strcmp(field, firmwares[i].version)) return &firmwares[i];
+    for (size_t i = 0; i < sizeof firmwares / sizeof *firmwares; i++) {
+        if (strncmp(line, firmwares[i].model, 4)) continue;
+        *name = firmwares[i].name;
+        if (!strcmp(field, firmwares[i].version)) return &firmwares[i];
+    }
     return 0;
 }
 
@@ -212,10 +216,11 @@ static void apply_tapped(void *unused) {
 
 static void build(NkScreen *screen, void *unused) {
     char version[32] = "unknown";
-    firmware = this_firmware(version, sizeof version);
+    const char *name = "Unknown model";
+    firmware = this_firmware(version, sizeof version, &name);
     memset(rows, 0, sizeof rows);
     nk_section(screen, "THIS KOBO");
-    nk_value_row(screen, firmware ? firmware->name : "Unknown model", version);
+    nk_value_row(screen, name, version);
     if (!firmware || firmware->patch_count > MAX_PATCHES) {
         nk_text(screen, "There are no patches for this firmware yet.");
         return;
