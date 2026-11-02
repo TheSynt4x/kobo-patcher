@@ -66,10 +66,10 @@ export const REGISTRY = [
     id: "patches",
     kind: "mod",
     category: "Mods",
-    title: "Patches on your Kobo",
+    title: "Kobo Patcher",
     tag: "Experimental",
-    description: "Adds a Patches page under More, to turn these patches on and off on the Kobo itself. "
-      + "Patching from this page starts again from Kobo's original files, so it replaces changes made there.",
+    description: "Adds Kobo Patcher to the top of Settings, to switch these patches on and off on the Kobo itself, straight "
+      + "away. With it, patches from this page don't need the firmware file, and it can check for new patches over Wi-Fi.",
     warning: "Tested on one Kobo Nia. Use it at your own risk.",
     file: "mods/libpatches.so",
     targets: PATCHES_MOD_FIRMWARE,

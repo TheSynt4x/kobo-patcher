@@ -53,9 +53,11 @@ static struct {
     int on;
 } choices[MAX_CHOICES];
 static int choice_count;
+static struct stat choices_seen;
 
 static void read_choices(void) {
     choice_count = 0;
+    stat(CHOICES, &choices_seen);
     FILE *file = fopen(CHOICES, "r");
     if (!file) return;
     char value[8];
@@ -91,6 +93,15 @@ static void save_choices(void) {
     fsync(fileno(file));
     fclose(file);
     rename(CHOICES_TEMP, CHOICES);
+    stat(CHOICES, &choices_seen);
+}
+
+/* The page can change the choices over USB. They're read again, and made, when the file has
+ * changed since this mod last read or wrote it. */
+static int choices_changed(void) {
+    struct stat now;
+    if (stat(CHOICES, &now)) return 0;
+    return now.st_mtime != choices_seen.st_mtime || now.st_size != choices_seen.st_size || now.st_ino != choices_seen.st_ino;
 }
 
 /* Patches turned off go first, because patches in a group can share bytes. */
@@ -197,6 +208,14 @@ static void check_tapped(void *unused) { update_check(update_status, model, vers
 
 static void build(NkScreen *screen, void *unused) {
     load_list();
+    if (choices_changed()) {
+        read_choices();
+        if (firmware && ready) {
+            nk_failsafe(GUARD_SECONDS);
+            apply_choices();
+            live_refresh();
+        }
+    }
     memset(rows, 0, sizeof rows);
     nk_section(screen, "THIS KOBO");
     nk_value_row(screen, firmware ? firmware->name : *model ? model : "Unknown model", version);

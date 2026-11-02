@@ -591,6 +591,7 @@ export async function inspectKobo(root) {
   let adds = null;
   if (await dirExists(root, ".adds")) adds = await root.getDirectoryHandle(".adds");
   const record = adds ? await readRecord(adds, version.firmware) : { patches: [], mods: {} };
+  const kobopatcher = adds && await dirExists(adds, "patches") ? await adds.getDirectoryHandle("patches") : null;
   const installed = {
     // An empty nm folder is what's left after NickelMenu uninstalls itself.
     nickelmenu: !!adds && await dirExists(adds, "nm")
@@ -599,8 +600,30 @@ export async function inspectKobo(root) {
     patches: record.patches,
     mods: record.mods,
     koreader: !!adds && await dirExists(adds, "koreader"),
+    // What Kobo Patcher on the Kobo has: the patches switched there, and its list for this firmware.
+    choices: kobopatcher ? await readChoices(kobopatcher) : {},
+    list: kobopatcher ? await readList(kobopatcher, `${version.model}-${version.firmware}.txt`) : null,
   };
   return { ...version, name, build, installed };
+}
+
+// Kobo Patcher's choices.txt: an "id on" or "id off" line for each patch switched on the Kobo.
+async function readChoices(dir) {
+  if (!await exists(dir, "choices.txt")) return {};
+  const text = new TextDecoder().decode(await readFile(dir, "choices.txt"));
+  return Object.fromEntries(text.split("\n").map((line) => line.trim().split(/\s+/)).filter((parts) => parts.length === 2)
+    .map(([id, value]) => [id, value === "on"]));
+}
+
+async function readList(dir, name) {
+  if (!await dirExists(dir, "lists")) return null;
+  const lists = await dir.getDirectoryHandle("lists");
+  return await exists(lists, name) ? new TextDecoder().decode(await readFile(lists, name)) : null;
+}
+
+// The ids in a patch list from tools/write_lists.py.
+export function listIds(text) {
+  return text.split("\n").filter((line) => line.startsWith("patch\t")).map((line) => line.split("\t")[1]);
 }
 
 function fromHex(text) {
@@ -631,7 +654,9 @@ function systemFiles(firmware) {
 // Pass the firmware only to change patches: both system files are rebuilt from its originals, so
 // a patch that's no longer chosen goes away. Without it the system files aren't touched.
 // mods: [{ id, data, sha256 }] to add. remove.mods: ids to remove the next time Nickel starts.
-export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = null, edits = {}, remove = null, mods = [] } = {}) {
+// mod: { list: { name, text }, choices: { id: on } } for Kobo Patcher to switch those patches on the
+// Kobo, from its list in .adds/patches/lists, instead of them going into the system files.
+export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = null, edits = {}, remove = null, mods = [], mod = null } = {}) {
   const chosen = PATCHES.filter((patch) => patchIds.includes(patch.id));
   if (chosen.length && !firmware) throw new Refused("patches need the firmware file");
   if (koreader && !nickelmenu) throw new Refused("KOReader's menu entry needs NickelMenu");
@@ -652,10 +677,17 @@ export function planPatch(firmware, patchIds, { nickelmenu = null, koreader = nu
     files.push(...systemFiles({ libnickel: current[NICKEL_PATH], nickel: current[NICKEL_BIN_PATH] }));
   }
   if (nickelmenu) files.push(...nickelmenu.files);
-  for (const mod of mods) files.push({ path: modPath(mod.id), data: mod.data, mode: 0o755 });
+  for (const each of mods) files.push({ path: modPath(each.id), data: each.data, mode: 0o755 });
+  const storage = [];
+  if (mod) {
+    const choices = Object.entries(mod.choices).map(([id, on]) => `${id} ${on ? "on" : "off"}\n`).join("");
+    storage.push({ dir: ["patches", "lists"], name: mod.list.name, data: encoder.encode(mod.list.text) });
+    storage.push({ dir: ["patches"], name: "choices.txt", data: encoder.encode(choices) });
+  }
   return {
     settings: chosen.flatMap((patch) => patch.settings),
     files,
+    storage,
     koreader,
     remove,
     installsNickelMenu: !!nickelmenu,
@@ -680,6 +712,7 @@ export function planUndo(firmware, installed) {
   return {
     settings: [],
     files: firmware ? systemFiles(firmware) : [],
+    storage: [],
     koreader: null,
     remove: { ...installed, mods },
     installsMods: [],
@@ -839,10 +872,16 @@ export async function writeToKobo(root, plan, progress = () => {}) {
   }
   if (plan.koreader) await copyKOReader(root, plan.koreader, progress);
   const removing = plan.remove?.koreader || plan.remove?.nickelmenu || !!plan.remove?.mods?.length;
-  if (!plan.files.length && !plan.koreader && !plan.settings.length && !removing) {
+  if (!plan.files.length && !plan.koreader && !plan.settings.length && !plan.storage?.length && !removing) {
     throw new Refused("there's nothing to change, so nothing was written");
   }
   if (removing) await removeAddons(root, plan.remove);
+  for (const { dir: path, name, data } of plan.storage ?? []) {
+    let dir = await root.getDirectoryHandle(".adds", { create: true });
+    for (const part of path) dir = await dir.getDirectoryHandle(part, { create: true });
+    await writeFile(dir, name, data);
+    await cleanMacFiles(dir);
+  }
   if (plan.settings.length) {
     const before = await readFile(koboDir, "Kobo eReader.conf");
     let text = new TextDecoder("utf-8", { fatal: true }).decode(before);

@@ -1,6 +1,6 @@
 import {
-  Refused, UnsupportedFirmware, inspectKobo, koboSerial, writeFullBackup, planPatch, planUndo, readBackup, readFirmware, readKOReader,
-  readNickelMenu, sha256, writeToKobo,
+  Refused, UnsupportedFirmware, inspectKobo, koboSerial, listIds, writeFullBackup, planPatch, planUndo, readBackup, readFirmware,
+  readKOReader, readNickelMenu, sha256, writeToKobo,
 } from "./patcher.js";
 import {
   CATEGORIES, FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, NICKELMENU, firmwareRequestUrl, firmwareSearchUrl, registryFor,
@@ -13,7 +13,9 @@ const ADDON_FILES = {
 
 const $ = (id) => document.getElementById(id);
 const canWrite = "showDirectoryPicker" in window && "showSaveFilePicker" in window;
-const state = { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {}, mods: {}, riskAccepted: false };
+const state = {
+  drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {}, mods: {}, list: null, riskAccepted: false,
+};
 
 function say(id, text, kind = "") {
   $(id).textContent = text;
@@ -66,23 +68,43 @@ function recorded() {
   return state.kobo?.installed.patches ?? [];
 }
 
-// The firmware is only needed to change which patches are on the Kobo.
+// With Kobo Patcher ticked, the patches in its list are switched on the Kobo, not put in the files.
+function viaKoboPatcher() {
+  return !!state.list && checked("patches");
+}
+
+function forFiles(ids) {
+  return ids.filter((id) => !(viaKoboPatcher() && state.list.ids.has(id)));
+}
+
+// The firmware is only needed to change which patches are in the Kobo's system files.
 function patchesChanged() {
-  const chosen = chosenPatches();
-  return chosen.length !== recorded().length || chosen.some((id) => !recorded().includes(id));
+  const chosen = forFiles(chosenPatches());
+  const before = forFiles(recorded());
+  return chosen.length !== before.length || chosen.some((id) => !before.includes(id));
+}
+
+// What a patch in Kobo Patcher's list is now: as switched on the Kobo, or else as the files have it.
+function onNow(id) {
+  return state.kobo?.installed.choices[id] ?? recorded().includes(id);
+}
+
+function choicesChanged() {
+  if (!viaKoboPatcher()) return false;
+  return state.kobo.installed.list !== state.list.text || [...state.list.ids].some((id) => checked(id) !== onNow(id));
 }
 
 function readyToPatch() {
   const addons = chosenAddons();
   const { nickelmenu, koreader } = addonsToRemove();
   const modsChanged = modsToInstall().length || modsToRemove().length;
-  if (!patchesChanged() && !addons.length && !nickelmenu && !koreader && !modsChanged) return false;
+  if (!patchesChanged() && !choicesChanged() && !addons.length && !nickelmenu && !koreader && !modsChanged) return false;
   return addons.every((addon) => state.addons[addon.id]) && (!patchesChanged() || !!state.firmware);
 }
 
 function render() {
   $("browser-notice").hidden = canWrite;
-  $("step-firmware").hidden = !state.kobo || (!patchesChanged() && !recorded().length);
+  $("step-firmware").hidden = !state.kobo || (!patchesChanged() && !forFiles(recorded()).length);
   $("step-patches").classList.toggle("locked", !state.kobo);
   $("step-firmware").classList.toggle("locked", !state.kobo);
   // Stays readable after a run, when the Kobo is no longer selected, for its "Done" message.
@@ -96,6 +118,7 @@ function render() {
   $("backup").disabled = !state.drive || state.busy;
   $("firmware").disabled = state.busy || !state.kobo;
   for (const box of document.querySelectorAll("#patches input")) box.disabled = state.busy;
+  if ($("via-kobopatcher")) $("via-kobopatcher").hidden = !viaKoboPatcher();
   // KOReader's menu entry lives in NickelMenu, so choosing it brings NickelMenu along.
   if ($("patch-nickelmenu")) {
     if (checked("koreader")) $("patch-nickelmenu").checked = true;
@@ -217,14 +240,20 @@ function addonFile(addon) {
 
 function showPatches() {
   // Ticked if already on the Kobo, because changing patches rebuilds them all from the originals.
-  const rows = [];
+  // With Kobo Patcher, its patches are ticked as it has them.
+  const rows = [element("p", {
+    id: "via-kobopatcher", className: "status", hidden: true,
+    textContent: "Kobo Patcher switches the patches it has on the Kobo itself, so they don't need the firmware file. "
+      + "You can change them there too, under Settings.",
+  })];
+  const mine = (id) => !!modInstalled("patches") && !!state.list?.ids.has(id);
   for (const category of CATEGORIES) {
     const items = state.items.filter((item) => item.category === category);
     if (items.length) rows.push(element("h3", { textContent: category }));
     for (const item of items) {
       if (item.kind === "addon") rows.push(patchRow(item, isInstalled(item.id)), addonFile(item));
       else if (item.kind === "mod") rows.push(patchRow(item, !!modInstalled(item.id)));
-      else rows.push(patchRow(item, recorded().includes(item.id)));
+      else rows.push(patchRow(item, mine(item.id) ? onNow(item.id) : recorded().includes(item.id)));
     }
   }
   $("patches").replaceChildren(...rows);
@@ -277,7 +306,7 @@ async function selectKobo() {
     if (error.name !== "AbortError") say("kobo-status", explain(error), "bad");
     return;
   }
-  Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, addons: {}, mods: {} });
+  Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, addons: {}, mods: {}, list: null });
   say("backup-status", "");
   $("patches").replaceChildren();
   clearFirmware();
@@ -296,7 +325,9 @@ async function selectKobo() {
       const edits = await response.json();
       const items = registryFor(kobo.model, kobo.firmware);
       const mods = await loadMods(items.filter((item) => item.kind === "mod"));
-      Object.assign(state, { root, kobo, edits, mods, items: items.filter((item) => item.kind !== "mod" || mods[item.id]) });
+      const list = mods.patches ? await loadList(`${kobo.model}-${kobo.firmware}.txt`) : null;
+      if (!list) delete mods.patches;
+      Object.assign(state, { root, kobo, edits, mods, list, items: items.filter((item) => item.kind !== "mod" || mods[item.id]) });
       showFirmwareLinks();
       showPatches();
       say("kobo-status", describe(kobo), "good");
@@ -325,6 +356,19 @@ async function loadMods(items) {
     }
   }
   return mods;
+}
+
+// Kobo Patcher's patch list for this firmware, also built by `make mods`. Without it there's no mod.
+async function loadList(name) {
+  try {
+    const response = await fetch(new URL(`mods/lists/${name}`, import.meta.url), { cache: "no-cache" });
+    if (!response.ok) throw new Error(`${response.status}`);
+    const text = await response.text();
+    return { name, text, ids: new Set(listIds(text)) };
+  } catch (error) {
+    console.warn(`not offering Kobo Patcher, because its list ${name} didn't load: ${error.message}`);
+    return null;
+  }
 }
 
 async function backUpEverything() {
@@ -385,14 +429,16 @@ async function run(makePlan) {
 
       say("run-status", "Writing to the Kobo…");
       await writeToKobo(state.root, plan, (text) => say("run-status", text));
-      Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, addons: {}, mods: {} });
+      Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, addons: {}, mods: {}, list: null });
       $("patches").replaceChildren();
       showFirmwareLinks();
       say("kobo-status", "");
       say("firmware-status", "");
       const after = plan.files.length
         ? "It installs and restarts by itself. If it doesn't, power it off and on."
-        : "Then restart it.";
+        : plan.storage.length
+          ? "Then open Settings > Kobo Patcher on it, and the patches switch straight away."
+          : "Then restart it.";
       say("run-status", `Done. Eject the Kobo properly before unplugging it. ${after} `
         + "The backup can contain sign-in tokens, so keep it private.", "good");
     } catch (error) {
@@ -403,10 +449,16 @@ async function run(makePlan) {
 
 function patch() {
   const addons = chosenAddons().map((addon) => addon.id);
-  run(() => planPatch(patchesChanged() ? state.firmware : null, patchesChanged() ? chosenPatches() : [], {
+  const changed = patchesChanged();
+  const mod = viaKoboPatcher() ? {
+    list: state.list,
+    choices: Object.fromEntries([...state.list.ids].map((id) => [id, checked(id)])),
+  } : null;
+  run(() => planPatch(changed ? state.firmware : null, changed ? forFiles(chosenPatches()) : [], {
     edits: state.edits,
     remove: { ...addonsToRemove(), mods: modsToRemove() },
     mods: modsToInstall(),
+    mod,
     nickelmenu: addons.includes("nickelmenu") ? state.addons.nickelmenu : null,
     koreader: addons.includes("koreader") ? state.addons.koreader : null,
   }));

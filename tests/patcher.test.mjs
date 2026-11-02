@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
   PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
-  readNickel, readNickelMenu, setConf, sha256, writeToKobo,
+  listIds, readNickel, readNickelMenu, setConf, sha256, writeToKobo,
 } from "../web/patcher.js";
 import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
 
@@ -447,6 +447,26 @@ with tarfile.open(sys.argv[1]) as tar:
   (await (await kobo.getDirectoryHandle(".adds")).getFileHandle("kobo-patcher.json")).data = new TextEncoder().encode(JSON.stringify(older));
   const { installed } = await inspectKobo(kobo);
   assert.deepEqual([installed.patches, installed.mods], [[], { patches: "abc" }]);
+});
+
+test("with Kobo Patcher, patches go to its choices and list, and the system files are left alone", async () => {
+  const record = JSON.stringify({ firmware: "4.38.23852", patches: ["margins"], mods: { patches: "abc" } });
+  const kobo = await fakeKobo({ ".adds/kobo-patcher.json": record, ".adds/patches/choices.txt": "margins off\nno-discover on\n" });
+  const before = (await inspectKobo(kobo)).installed;
+  assert.deepEqual([before.choices, before.list], [{ margins: false, "no-discover": true }, null]);
+
+  const text = "kobo-patcher-list\t1\nfirmware\tN306\t4.38.23852\tKobo Nia\npatch\tmargins\tREADING\t-\t-\tFiner margins\t\n"
+    + "edit\t/usr/local/Kobo/libnickel.so.1.0.0\t1\t02\t01\npatch\tno-discover\tX\t-\t-\tNo Discover\t\n";
+  assert.deepEqual(listIds(text), ["margins", "no-discover"]);
+  const plan = planPatch(null, [], { mod: { list: { name: "N306-4.38.23852.txt", text }, choices: { margins: true, "no-discover": false } } });
+  assert.deepEqual([plan.files, plan.record], [[], null]);
+  await writeToKobo(kobo, plan);
+
+  assert.equal(new TextDecoder().decode(await readFake(kobo, ".adds/patches/choices.txt")), "margins on\nno-discover off\n");
+  assert.equal(new TextDecoder().decode(await readFake(kobo, ".adds/patches/lists/N306-4.38.23852.txt")), text);
+  assert.equal(await readFake(kobo, ".kobo/KoboRoot.tgz"), null);
+  const after = (await inspectKobo(kobo)).installed;
+  assert.deepEqual([after.choices, after.list, after.patches], [{ margins: true, "no-discover": false }, text, ["margins"]]);
 });
 
 test("removing a mod leaves its uninstall file and keeps the patches, and Undo removes it too", async () => {
