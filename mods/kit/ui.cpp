@@ -62,6 +62,9 @@ static QByteArray mangled(const char *prefix, const char *name, const char *suff
     return QByteArray(prefix) + QByteArray::number(int(strlen(name))) + name + suffix;
 }
 
+/* Blocks are spaced by these: SPACE between parts of one, GAP between blocks. */
+enum { SPACE = 8, GAP = 24 };
+
 /* ---- Kobo's labels ---- */
 
 /* The vtable pointers a widget of the class holds: at +0 for QObject, and at +8 for QPaintDevice,
@@ -86,14 +89,15 @@ static bool renames(const char *name, const char *base) {
 
 /* The label classes blocks are made of, by the base each renames. */
 static const struct {
-    const char *name;
-    bool elided;
+    const char *name, *base;
 } label_classes[] = {
-    {"HeaderMediumLabel", false},     {"RegularLabel", false},      {"MetaDataLabel", false},
-    {"HeaderSmallElidedLabel", true}, {"SmallElidedLabel", true},
+    {"HeaderMediumLabel", "FontSizeAdjustingLabel"}, {"RegularLabel", "QLabel"},
+    {"MetaDataLabel", "QLabel"},                     {"HeaderSmallElidedLabel", "ElidedLabel"},
+    {"SmallElidedLabel", "ElidedLabel"},             {"RegularElidedLabel", "ElidedLabel"},
 };
 
 typedef void (*WidgetCtor)(void *self, QWidget *parent);
+typedef void (*FlagsCtor)(void *self, QWidget *parent, int flags);
 typedef void (*SetText)(void *self, const QString &text);
 
 void kit_set_text(QLabel *label, const QString &text) {
@@ -105,19 +109,24 @@ void kit_set_text(QLabel *label, const QString &text) {
 
 /* One of Kobo's labels, or a plain one if this firmware's isn't as expected. */
 static QLabel *kobo_label(QWidget *parent, const char *name, const QString &text) {
-    bool elided = false, known = false;
+    const char *base = 0;
     for (unsigned i = 0; i < sizeof label_classes / sizeof *label_classes; i++)
-        if (!strcmp(label_classes[i].name, name)) known = true, elided = label_classes[i].elided;
+        if (!strcmp(label_classes[i].name, name)) base = label_classes[i].base;
     void *vptrs[2];
-    bool styled = known && vptrs_of(name, vptrs) && renames(name, elided ? "ElidedLabel" : "QLabel");
+    bool styled = base && vptrs_of(name, vptrs) && renames(name, base);
     static WidgetCtor elided_ctor;
+    static FlagsCtor adjusting_ctor;
     if (!elided_ctor) elided_ctor = reinterpret_cast<WidgetCtor>(nickel("_ZN11ElidedLabelC1EP7QWidget"));
+    if (!adjusting_ctor) adjusting_ctor = reinterpret_cast<FlagsCtor>(nickel("_ZN22FontSizeAdjustingLabelC1EP7QWidget6QFlagsIN2Qt10WindowTypeEE"));
     QLabel *label;
-    if (styled && elided && elided_ctor) {
+    if (styled && !strcmp(base, "ElidedLabel") && elided_ctor) {
         label = static_cast<QLabel *>(alloc(0x200)); /* 0xe8 on 4.38 */
         elided_ctor(label, parent);
+    } else if (styled && !strcmp(base, "FontSizeAdjustingLabel") && adjusting_ctor) {
+        label = static_cast<QLabel *>(alloc(0x100)); /* 0x20 on 4.38 */
+        adjusting_ctor(label, parent, 0);
     } else {
-        styled = styled && !elided;
+        styled = styled && !strcmp(base, "QLabel");
         label = new (alloc(0x40)) QLabel(parent, 0);
     }
     if (styled) {
@@ -140,7 +149,7 @@ static QString image_path(const char *given) {
 /* Covers decode slowly on a Kobo, so each is kept at the sizes it's been shown at, a few at a time. */
 static QHash<QString, QPixmap> *scaled_images;
 
-static void show_image(QLabel *label, const QString &path, int width, int height) {
+static QPixmap scaled_pixmap(const QString &path, int width, int height) {
     if (!scaled_images) scaled_images = new QHash<QString, QPixmap>;
     QString key = path + QStringLiteral("@%1x%2").arg(width).arg(height);
     QPixmap pixmap = scaled_images->value(key);
@@ -151,6 +160,29 @@ static void show_image(QLabel *label, const QString &path, int width, int height
         if (scaled_images->size() >= 120) scaled_images->clear();
         scaled_images->insert(key, pixmap);
     }
+    return pixmap;
+}
+
+/* A cover as Kobo's Home shows one, in a box of width by height: the image in a thin frame at the
+ * box's bottom or top left, or a dashed outline of the whole box while there's none. */
+static void show_cover(QLabel *cover, const QString &path, int width, int height, bool bottom) {
+    QPixmap pixmap = scaled_pixmap(path, width - 2, height - 2);
+    if (pixmap.isNull()) {
+        cover->clear();
+        cover->setFixedSize(width, height);
+        cover->setStyleSheet(QStringLiteral("border: 1px dashed black;"));
+    } else {
+        cover->setFixedSize(pixmap.width() + 2, pixmap.height() + 2);
+        cover->setStyleSheet(QStringLiteral("border: 1px solid #999999;"));
+        cover->setPixmap(pixmap);
+    }
+    cover->move(0, bottom ? height - cover->height() : 0);
+    /* At the top, what follows comes right after the cover, whatever its shape. */
+    if (!bottom && cover->parentWidget()) cover->parentWidget()->setFixedHeight(cover->height());
+}
+
+static void show_image(QLabel *label, const QString &path, int width, int height) {
+    QPixmap pixmap = scaled_pixmap(path, width, height);
     if (pixmap.isNull()) {
         /* Until there's a cover, an empty one the size of a book. */
         label->clear();
@@ -188,23 +220,30 @@ static int image_set(lua_State *co) {
 static int page_heading(lua_State *co) {
     PagingContainer *paging = kit_check_page(co);
     const char *text = luaL_checkstring(co, 2);
-    QLabel *heading = kobo_label(paging, "HeaderMediumLabel", QString::fromUtf8(text));
+    QWidget *holder = new QWidget(paging);
+    QVBoxLayout *column = new QVBoxLayout(holder);
+    column->setContentsMargins(0, px(GAP), 0, px(2 * SPACE));
+    QLabel *heading = kobo_label(holder, "HeaderMediumLabel", QString::fromUtf8(text));
     heading->setWordWrap(true);
-    paging->addWidget(heading);
+    column->addWidget(heading, 0, 0);
+    paging->addWidget(holder);
     kit_push_handle(co, heading, "nk.label");
     return 1;
 }
 
 /* ---- books ---- */
 
-/* A books block's rows, kept to change them. It goes with the page. */
+/* Two rows of books fit on a page under a search box and a heading. */
+enum { SHELF_COLUMNS = 3, TILE_WIDTH = 190, TILE_COVER = 236, BOOK_COVER_WIDTH = 230, BOOK_COVER = 345 };
+
+/* A shelf's books, kept to change them. It goes with the page. */
 class Books : public QObject {
 public:
     explicit Books(QObject *parent) : QObject(parent), hook(0) {}
-    struct Row {
-        QPointer<QLabel> cover, title, author, status, badge;
+    struct Tile {
+        QPointer<QLabel> tile, cover, title, author, status;
     };
-    QList<Row> rows;
+    QList<Tile> tiles;
     KitHook *hook;
 };
 
@@ -229,83 +268,103 @@ static bool field_of(lua_State *co, int index, const char *name, QString *out) {
     return found;
 }
 
-static void fill_row(lua_State *co, int book, Books::Row &row) {
+/* Kobo's grey caption, in capitals as its style shows it, cut to the label's width. */
+static void set_caption(QLabel *label, const QString &text) {
+    label->ensurePolished();
+    label->setText(label->fontMetrics().elidedText(text.toUpper(), Qt::ElideRight, label->width()));
+}
+
+/* A title on two lines at most, the second cut short if it must be. */
+static void set_title(QLabel *label, const QString &text) {
+    QFontMetrics metrics = label->fontMetrics();
+    int width = label->width();
+    QStringList words = text.simplified().split(QLatin1Char(' '));
+    QString first;
+    while (!words.isEmpty()) {
+        QString longer = first.isEmpty() ? words.first() : first + QLatin1Char(' ') + words.first();
+        if (metrics.width(longer) > width) break;
+        first = longer;
+        words.removeFirst();
+    }
+    if (first.isEmpty()) label->setText(metrics.elidedText(text, Qt::ElideRight, width));
+    else if (words.isEmpty()) label->setText(first);
+    else label->setText(first + QLatin1Char('\n') + metrics.elidedText(words.join(QLatin1Char(' ')), Qt::ElideRight, width));
+}
+
+/* What's happening to a book, on the bottom left of its cover. */
+static void set_badge(QLabel *badge, const QString &text) {
+    badge->setText(text);
+    badge->setHidden(text.isEmpty());
+    badge->adjustSize();
+    badge->move(0, badge->parentWidget()->height() - badge->height());
+    badge->raise();
+}
+
+static void fill_tile(lua_State *co, int book, Books::Tile &tile) {
     QString text;
-    if (field_of(co, book, "title", &text) && row.title) kit_set_text(row.title, text);
-    if (field_of(co, book, "author", &text) && row.author) kit_set_text(row.author, text);
-    if (field_of(co, book, "status", &text) && row.status) row.status->setText(text);
-    if (field_of(co, book, "badge", &text) && row.badge) row.badge->setText(text);
-    if (field_of(co, book, "cover", &text) && row.cover) show_image(row.cover, image_path(text.toUtf8().constData()), px(70), px(110));
+    if (field_of(co, book, "title", &text) && tile.title) set_title(tile.title, text);
+    if (field_of(co, book, "author", &text) && tile.author) set_caption(tile.author, text);
+    if (field_of(co, book, "status", &text) && tile.status) set_badge(tile.status, text);
+    if (field_of(co, book, "cover", &text) && tile.cover)
+        show_cover(tile.cover, image_path(text.toUtf8().constData()), px(TILE_WIDTH), px(TILE_COVER), true);
 }
 
 typedef void (*TouchCtor)(void *self, QWidget *parent, int flags);
 
-/* A row as My Books lists a book: its cover, title and author, and on the right its state and
- * format. The row is a TouchLabel, Kobo's tappable label, holding the rest. */
-static Books::Row add_book_row(PagingContainer *paging, Books *books, int index) {
+/* Kobo's tappable label, to hold a block's parts. */
+static QLabel *touch_label(QWidget *parent) {
     static TouchCtor touch_ctor;
     if (!touch_ctor) touch_ctor = reinterpret_cast<TouchCtor>(nickel("_ZN10TouchLabelC1EP7QWidget6QFlagsIN2Qt10WindowTypeEE"));
-    QLabel *row;
-    if (touch_ctor) {
-        row = static_cast<QLabel *>(alloc(0x100)); /* 0x84 on 4.38 */
-        touch_ctor(row, paging, 0);
-    } else row = new (alloc(0x40)) QLabel(paging, 0);
-    row->setObjectName(QStringLiteral("nkBook"));
-    row->setFixedHeight(px(140));
-    QVBoxLayout *outer = new QVBoxLayout(row);
-    outer->setContentsMargins(0, 0, 0, 0);
-    outer->setSpacing(0);
-    QHBoxLayout *line = new QHBoxLayout();
-    line->setContentsMargins(px(15), px(15), px(15), px(15));
-    line->setSpacing(px(15));
-    outer->addLayout(line, 1);
-    QFrame *rule = new QFrame(row);
-    rule->setFixedHeight(1);
-    rule->setStyleSheet(QStringLiteral("background-color: black;"));
-    outer->addWidget(rule);
+    if (!touch_ctor) return new (alloc(0x40)) QLabel(parent, 0);
+    QLabel *label = static_cast<QLabel *>(alloc(0x100)); /* 0x84 on 4.38 */
+    touch_ctor(label, parent, 0);
+    return label;
+}
 
-    Books::Row parts;
-    QLabel *cover = new (alloc(0x40)) QLabel(row, 0);
-    cover->setFixedSize(px(70), px(110));
-    cover->setAlignment(Qt::AlignCenter);
-    parts.cover = cover;
-    line->addWidget(cover, 0, 0);
-
-    QVBoxLayout *middle = new QVBoxLayout();
-    middle->addStretch(1);
-    parts.title = kobo_label(row, "HeaderSmallElidedLabel", QString());
-    parts.author = kobo_label(row, "SmallElidedLabel", QString());
-    middle->addWidget(parts.title, 0, 0);
-    middle->addWidget(parts.author, 0, 0);
-    middle->addStretch(1);
-    line->addLayout(middle, 1);
-
-    QVBoxLayout *right = new QVBoxLayout();
-    parts.status = kobo_label(row, "RegularLabel", QString());
-    parts.badge = kobo_label(row, "MetaDataLabel", QString());
-    parts.status->setAlignment(Qt::AlignRight);
-    parts.badge->setAlignment(Qt::AlignRight);
-    right->addWidget(parts.status, 0, 0);
-    right->addWidget(parts.badge, 0, 0);
-    right->addStretch(1);
-    line->addLayout(right, 0);
+/* A book as Kobo's Home shows one: its cover, its title under it, and its author in grey capitals. */
+static Books::Tile add_tile(QWidget *row, Books *books, int index) {
+    Books::Tile parts;
+    QLabel *tile = touch_label(row);
+    tile->setObjectName(QStringLiteral("nkBook"));
+    tile->setFixedWidth(px(TILE_WIDTH));
+    parts.tile = tile;
+    QVBoxLayout *column = new QVBoxLayout(tile);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(0);
+    QWidget *box = new QWidget(tile);
+    box->setFixedSize(px(TILE_WIDTH), px(TILE_COVER));
+    parts.cover = new (alloc(0x40)) QLabel(box, 0);
+    show_cover(parts.cover, QString(), px(TILE_WIDTH), px(TILE_COVER), true);
+    parts.status = kobo_label(box, "MetaDataLabel", QString());
+    parts.status->setStyleSheet(QStringLiteral("background-color: black; color: white; padding: %1px %2px;").arg(px(4)).arg(px(8)));
+    parts.status->hide();
+    column->addWidget(box, 0, 0);
+    column->addSpacing(px(SPACE));
+    parts.title = kobo_label(tile, "RegularLabel", QString());
+    parts.author = kobo_label(tile, "MetaDataLabel", QString());
+    parts.title->setFixedWidth(px(TILE_WIDTH));
+    parts.author->setFixedWidth(px(TILE_WIDTH));
+    column->addWidget(parts.title, 0, 0);
+    column->addWidget(parts.author, 0, 0);
+    column->addStretch(1);
+    /* Room for two lines of title, with the author right under however many there are; and a
+     * TouchLabel is as tall as its text, not its layout, so it's told. */
+    parts.title->ensurePolished();
+    parts.author->ensurePolished();
+    tile->setFixedHeight(px(TILE_COVER) + px(SPACE) + parts.title->fontMetrics().lineSpacing() * 2 +
+                         parts.author->fontMetrics().height());
 
     Tap *tap = new Tap();
     tap->books = books;
     tap->index = index;
-    QObject::connect(row, &QObject::destroyed, [tap]() { delete tap; });
-    if (touch_ctor) nk_connect(row, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", book_tapped, tap);
-    /* Kobo's elided labels can take a tap themselves. */
-    QLabel *texts[] = {parts.title, parts.author};
-    for (int i = 0; i < 2; i++)
-        if (texts[i]->inherits("ElidedLabel")) nk_connect(texts[i], "_ZN11ElidedLabel6tappedEv", "_ZN11ElidedLabel16staticMetaObjectE", book_tapped, tap);
-    paging->addWidget(row);
+    QObject::connect(tile, &QObject::destroyed, [tap]() { delete tap; });
+    if (tile->inherits("TouchLabel")) nk_connect(tile, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", book_tapped, tap);
     return parts;
 }
 
-/* page:books(list, tapped): a row for each book, as My Books lists them. A book is a table of
- * title, author, cover (a path), status and badge. tapped(i) runs when the i-th is tapped. The
- * handle's :set(i, book) changes the fields given. */
+/* page:books(list, tapped): the books three across, as Kobo's Home shows them. A book is a table
+ * of title, author, cover (a path) and status, shown on its cover. tapped(i) runs when the i-th is
+ * tapped. The handle's :set(i, book) changes the fields given. */
 static int page_books(lua_State *co) {
     PagingContainer *paging = kit_check_page(co);
     luaL_checktype(co, 2, LUA_TTABLE);
@@ -313,13 +372,34 @@ static int page_books(lua_State *co) {
     Books *books = new Books(paging);
     books->hook = kit_hook(co, 3, books);
     lua_Integer count = luaL_len(co, 2);
-    for (lua_Integer i = 1; i <= count && i <= 500; i++) {
-        lua_geti(co, 2, i);
-        if (lua_istable(co, -1)) {
-            books->rows << add_book_row(paging, books, books->rows.size());
-            fill_row(co, lua_gettop(co), books->rows.last());
+    if (count > 500) count = 500;
+    /* A row a block, so pages turn between rows. */
+    for (lua_Integer first = 1; first <= count; first += SHELF_COLUMNS) {
+        QWidget *row = new QWidget(paging);
+        QHBoxLayout *line = new QHBoxLayout(row);
+        line->setContentsMargins(0, 0, 0, px(GAP));
+        line->setSpacing(0);
+        for (int j = 0; j < SHELF_COLUMNS; j++) {
+            if (j) line->addStretch(1);
+            lua_Integer i = first + j;
+            QWidget *slot = 0;
+            if (i <= count) {
+                Books::Tile tile;
+                if (lua_geti(co, 2, i) == LUA_TTABLE) {
+                    tile = add_tile(row, books, int(i - 1));
+                    fill_tile(co, lua_gettop(co), tile);
+                    slot = tile.tile;
+                }
+                lua_pop(co, 1);
+                books->tiles << tile;
+            }
+            if (!slot) {
+                slot = new QWidget(row);
+                slot->setFixedWidth(px(TILE_WIDTH));
+            }
+            line->addWidget(slot, 0, Qt::AlignTop);
         }
-        lua_pop(co, 1);
+        paging->addWidget(row);
     }
     kit_push_handle(co, books, "nk.books");
     return 1;
@@ -329,7 +409,124 @@ static int books_set(lua_State *co) {
     Books *books = static_cast<Books *>(kit_check_handle(co, 1, "nk.books"));
     lua_Integer i = luaL_checkinteger(co, 2);
     luaL_checktype(co, 3, LUA_TTABLE);
-    if (i >= 1 && i <= books->rows.size()) fill_row(co, 3, books->rows[int(i - 1)]);
+    if (i >= 1 && i <= books->tiles.size()) fill_tile(co, 3, books->tiles[int(i - 1)]);
+    return 0;
+}
+
+/* ---- a book ---- */
+
+typedef void (*SetBool)(void *self, bool on);
+
+/* Kobo's black button, as on its store's pages, or 0 if this firmware has none. */
+static QLabel *kobo_button(QWidget *parent) {
+    WidgetCtor ctor = reinterpret_cast<WidgetCtor>(nickel("_ZN13N3ButtonLabelC1EP7QWidget"));
+    SetBool primary = reinterpret_cast<SetBool>(nickel("_ZN13N3ButtonLabel16setPrimaryButtonEb"));
+    if (!ctor) return 0;
+    QLabel *button = static_cast<QLabel *>(alloc(0x200)); /* 0x98 on 4.38 */
+    ctor(button, parent);
+    if (primary) primary(button, true);
+    /* Kobo paints its buttons itself, and makes the primary one black only in some places. */
+    typedef void (*SetColor)(void *self, QColor color);
+    SetColor background = reinterpret_cast<SetColor>(nickel("_ZN13N3ButtonLabel18setBackgroundColorE6QColor"));
+    if (background) background(button, QColor(Qt::black));
+    button->setStyleSheet(QStringLiteral("color: white;"));
+    button->setAlignment(Qt::AlignCenter);
+    return button;
+}
+
+class Book : public QObject {
+public:
+    explicit Book(QObject *parent) : QObject(parent), hook(0) {}
+    QPointer<QLabel> cover, title, author, action, status;
+    KitHook *hook;
+};
+
+static void book_action(void *arg) {
+    QPointer<Book> *book = static_cast<QPointer<Book> *>(arg);
+    lua_State *co = *book ? kit_hook_task((*book)->hook) : 0;
+    if (co) kit_resume(co, 0);
+}
+
+static void fill_book(lua_State *co, int index, Book *book) {
+    QString text;
+    if (field_of(co, index, "title", &text) && book->title) book->title->setText(text);
+    if (field_of(co, index, "author", &text) && book->author) book->author->setText(text);
+    if (field_of(co, index, "status", &text) && book->status) {
+        book->status->setText(text);
+        book->status->setHidden(text.isEmpty());
+    }
+    if (field_of(co, index, "action", &text) && book->action) {
+        book->action->setText(text);
+        book->action->setHidden(text.isEmpty());
+    }
+    if (field_of(co, index, "cover", &text) && book->cover)
+        show_cover(book->cover, image_path(text.toUtf8().constData()), px(BOOK_COVER_WIDTH), px(BOOK_COVER), false);
+}
+
+/* page:book(fields, tapped): a book as Kobo's book details show one: its cover on the left, and on
+ * the right its title, author, Kobo's black button and a line of what's happening. The fields are
+ * cover (a path), title, author, action (the button's text, or "" for none) and status. tapped()
+ * runs when the button is tapped. The handle's :set(fields) changes the fields given. */
+static int page_book(lua_State *co) {
+    PagingContainer *paging = kit_check_page(co);
+    luaL_checktype(co, 2, LUA_TTABLE);
+    luaL_checktype(co, 3, LUA_TFUNCTION);
+    QWidget *block = new QWidget(paging);
+    Book *book = new Book(block);
+    book->hook = kit_hook(co, 3, book);
+    QHBoxLayout *line = new QHBoxLayout(block);
+    line->setContentsMargins(0, px(SPACE), 0, px(GAP));
+    line->setSpacing(px(GAP));
+    QWidget *box = new QWidget(block);
+    box->setFixedSize(px(BOOK_COVER_WIDTH), px(BOOK_COVER));
+    book->cover = new (alloc(0x40)) QLabel(box, 0);
+    show_cover(book->cover, QString(), px(BOOK_COVER_WIDTH), px(BOOK_COVER), false);
+    line->addWidget(box, 0, Qt::AlignTop);
+
+    QVBoxLayout *right = new QVBoxLayout();
+    right->setSpacing(px(SPACE));
+    book->title = kobo_label(block, "HeaderMediumLabel", QString());
+    book->author = kobo_label(block, "RegularLabel", QString());
+    book->status = kobo_label(block, "RegularLabel", QString());
+    book->title->setWordWrap(true);
+    book->author->setWordWrap(true);
+    book->status->setWordWrap(true);
+    right->addWidget(book->title, 0, 0);
+    right->addWidget(book->author, 0, 0);
+    right->addSpacing(px(2 * SPACE));
+    book->action = kobo_button(block);
+    if (book->action) {
+        book->action->setMinimumHeight(px(64));
+        right->addWidget(book->action, 0, 0);
+        QPointer<Book> *arg = new QPointer<Book>(book);
+        QObject::connect(book->action, &QObject::destroyed, [arg]() { delete arg; });
+        nk_connect(book->action, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", book_action, arg);
+    }
+    right->addWidget(book->status, 0, 0);
+    right->addStretch(1);
+    line->addLayout(right, 1);
+    fill_book(co, 2, book);
+    paging->addWidget(block);
+    kit_push_handle(co, book, "nk.book");
+    return 1;
+}
+
+/* page:paragraph(text): text in Kobo's regular style, wrapped, as a book's description. */
+static int page_paragraph(lua_State *co) {
+    PagingContainer *paging = kit_check_page(co);
+    QLabel *text = kobo_label(paging, "RegularLabel", QString::fromUtf8(luaL_checkstring(co, 2)));
+    text->setWordWrap(true);
+    text->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    text->setContentsMargins(0, 0, 0, px(2 * SPACE));
+    paging->addWidget(text);
+    kit_push_handle(co, text, "nk.label");
+    return 1;
+}
+
+static int book_set(lua_State *co) {
+    Book *book = static_cast<Book *>(kit_check_handle(co, 1, "nk.book"));
+    luaL_checktype(co, 2, LUA_TTABLE);
+    fill_book(co, 2, book);
     return 0;
 }
 
@@ -507,39 +704,13 @@ typedef int (*IntOf)(const void *self);
 typedef void (*Turn)(void *self);
 typedef void (*PointOf)(QPoint *out, const void *self);
 
-/* A tab's page: a PagingContainer that turns a page for each drag up or down, or across, with
- * "Page 2 of 5" under it while there's more than one. */
+/* A tab's page: a PagingContainer that turns a page for each drag up or down, or across. */
 class TabPage : public QWidget {
 public:
     TabPage() : QWidget(0) {}
     QPointer<QWidget> paging;
-    QPointer<QLabel> pages;
-
-    void count_pages() {
-        static IntOf page_of, count_of;
-        if (!page_of) page_of = reinterpret_cast<IntOf>(nickel("_ZNK15PagingContainer7getPageEv"));
-        if (!count_of) count_of = reinterpret_cast<IntOf>(nickel("_ZNK15PagingContainer8numPagesEv"));
-        if (!paging || !pages || !page_of || !count_of) return;
-        int page = page_of(paging), count = count_of(paging);
-        if (page < count) page++; /* from 0 */
-        pages->setText(QStringLiteral("Page %1 of %2").arg(page).arg(count));
-        pages->setVisible(count > 1);
-    }
 
 protected:
-    void showEvent(QShowEvent *event) override {
-        QWidget::showEvent(event);
-        /* The pages are counted once they're laid out, which is after they're shown. */
-        QPointer<TabPage> self(this);
-        QTimer *soon = new QTimer();
-        soon->setSingleShot(true);
-        QObject::connect(soon, &QTimer::timeout, [self, soon]() {
-            soon->deleteLater();
-            if (self) self->count_pages();
-        });
-        soon->start(0);
-    }
-
     bool event(QEvent *event) override {
         static int *drag_type;
         static PointOf begin, end;
@@ -560,10 +731,7 @@ protected:
             static Turn next, prev;
             if (!next) next = reinterpret_cast<Turn>(nickel("_ZN15PagingContainer8nextPageEv"));
             if (!prev) prev = reinterpret_cast<Turn>(nickel("_ZN15PagingContainer8prevPageEv"));
-            if (qAbs(along) > px(40) && next && prev) {
-                (along > 0 ? next : prev)(paging);
-                count_pages();
-            }
+            if (qAbs(along) > px(40) && next && prev) (along > 0 ? next : prev)(paging);
         }
         return true;
     }
@@ -577,12 +745,63 @@ static struct {
 } tab;
 
 static void light_buttons();
+static void open_tab(void *);
+
+/* The pages opened over the tab's first, by build function, the last on top. */
+static lua_State *ui_lua;
+static QList<int> *tab_stack;
+
+static void close_pages(int keep) {
+    while (tab_stack && tab_stack->size() > keep) luaL_unref(ui_lua, LUA_REGISTRYINDEX, tab_stack->takeLast());
+}
+
+/* Once the tap that asked is done, as the widget it came from goes with the page. */
+static void reopen_soon() {
+    QTimer *soon = new QTimer();
+    soon->setSingleShot(true);
+    QObject::connect(soon, &QTimer::timeout, [soon]() {
+        soon->deleteLater();
+        open_tab(0);
+    });
+    soon->start(0);
+}
+
+static void back_tapped(void *) {
+    if (tab_stack && !tab_stack->isEmpty()) close_pages(tab_stack->size() - 1);
+    reopen_soon();
+}
+
+/* Tapping the tab in the bar goes back to its first page, as Kobo's own tabs do. */
+static void tab_tapped(void *) {
+    close_pages(0);
+    open_tab(0);
+}
+
+static bool in_tab(QWidget *widget) {
+    for (QWidget *w = widget; w; w = w->parentWidget())
+        if (w->objectName() == QLatin1String("nkTabPage")) return true;
+    return false;
+}
+
+/* page:open(build): a page of the tab's own over this one, built by build(page), with Kobo's
+ * back arrow to return. */
+static int page_open(lua_State *co) {
+    PagingContainer *paging = kit_check_page(co);
+    luaL_checktype(co, 2, LUA_TFUNCTION);
+    if (!in_tab(reinterpret_cast<QWidget *>(paging))) return luaL_error(co, "page:open is for a tab's pages");
+    if (!tab_stack) tab_stack = new QList<int>;
+    lua_pushvalue(co, 2);
+    *tab_stack << luaL_ref(co, LUA_REGISTRYINDEX);
+    reopen_soon();
+    return 0;
+}
 
 static TabPage *make_tab_page() {
     TabPage *page = new TabPage();
     page->setObjectName(QStringLiteral("nkTabPage"));
     page->setAttribute(Qt::WA_StyledBackground);
-    page->setStyleSheet(QStringLiteral("#nkTabPage { background-color: white; }"));
+    /* Kobo's style pads some labels to fit its own layouts; a tab's blocks line up on their own. */
+    page->setStyleSheet(QStringLiteral("#nkTabPage { background-color: white; } #nkTabPage QLabel { padding: 0px; }"));
     /* What Kobo reads off a view to show its status bar: the clock, Wi-Fi and battery. */
     page->setProperty("showTitle", true);
     page->setProperty("showIndicators", true);
@@ -591,21 +810,27 @@ static TabPage *make_tab_page() {
     if (!drag_type) drag_type = static_cast<int *>(nickel("_ZN21DragGestureRecognizer12_gestureTypeE"));
     if (drag_type) page->grabGesture(Qt::GestureType(*drag_type));
     QVBoxLayout *column = new QVBoxLayout(page);
+    bool over = tab_stack && !tab_stack->isEmpty();
     /* Below the status bar, with the margins of Kobo's More page. */
-    column->setContentsMargins(px(40), px(84), px(40), px(8));
+    column->setContentsMargins(px(40), over ? px(76) : px(84), px(40), px(8));
     column->setSpacing(0);
+    if (over) {
+        QLabel *back = touch_label(page);
+        QPixmap arrow(QStringLiteral(":/images/reading/back_arrow.png"));
+        if (arrow.isNull()) back->setText(QStringLiteral("‹"));
+        else back->setPixmap(arrow);
+        back->setFixedSize(px(64), px(64));
+        back->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        if (back->inherits("TouchLabel")) nk_connect(back, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", back_tapped, 0);
+        column->addWidget(back, 0, Qt::AlignLeft);
+    }
     WidgetCtor paging_ctor = reinterpret_cast<WidgetCtor>(nickel("_ZN15PagingContainerC1EP7QWidget"));
     if (!paging_ctor) return page;
     QWidget *paging = static_cast<QWidget *>(alloc(0x100)); /* 0x30 on 4.38 */
     paging_ctor(paging, page);
     page->paging = paging;
     column->addWidget(paging, 1);
-    QLabel *pages = kobo_label(page, "MetaDataLabel", QString());
-    pages->setAlignment(Qt::AlignRight);
-    pages->hide();
-    page->pages = pages;
-    column->addWidget(pages, 0);
-    kit_build_page(static_cast<PagingContainer *>(paging), tab.build, true);
+    kit_build_page(static_cast<PagingContainer *>(paging), over ? tab_stack->last() : tab.build, true);
     /* Both are Discover to Kobo, so only the one showing is lit. */
     tab.open = true;
     light_buttons();
@@ -709,7 +934,7 @@ static void hooked_nav_view(void *self, QWidget *parent) {
     button->setMinimumSize(discover->minimumSize());
     button->setMaximumSize(discover->maximumSize());
     row->insertWidget(at + 1, button, row->stretch(at));
-    nk_connect(button, "_ZN13MainNavButton6tappedEv", "_ZN13MainNavButton16staticMetaObjectE", open_tab, 0);
+    nk_connect(button, "_ZN13MainNavButton6tappedEv", "_ZN13MainNavButton16staticMetaObjectE", tab_tapped, 0);
     tab.button = button;
     nk_log("tab added");
 }
@@ -760,13 +985,17 @@ static int l_toast(lua_State *co) {
 }
 
 void kit_open_ui(lua_State *L) {
-    static const luaL_Reg page_methods[] = {{"heading", page_heading}, {"books", page_books}, {"cover", page_cover},
-                                           {"search", page_search}, {"field", page_field}, {0, 0}};
+    static const luaL_Reg page_methods[] = {{"heading", page_heading}, {"books", page_books}, {"book", page_book},
+                                           {"cover", page_cover}, {"search", page_search}, {"field", page_field},
+                                           {"open", page_open}, {"paragraph", page_paragraph}, {0, 0}};
     static const luaL_Reg books_methods[] = {{"set", books_set}, {0, 0}};
+    static const luaL_Reg book_methods[] = {{"set", book_set}, {0, 0}};
     static const luaL_Reg field_methods[] = {{"text", field_text}, {"set", field_set}, {0, 0}};
     static const luaL_Reg image_methods[] = {{"set", image_set}, {0, 0}};
     kit_add_page_methods(page_methods);
+    ui_lua = L;
     kit_add_type("nk.books", books_methods);
+    kit_add_type("nk.book", book_methods);
     kit_add_type("nk.field", field_methods);
     kit_add_type("nk.image", image_methods);
     lua_pushcfunction(L, l_tab);
