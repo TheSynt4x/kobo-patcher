@@ -36,6 +36,29 @@ nk.settings("Example", function(page)
   page:button("Fail on purpose", "Fail", function()
     error("an error on purpose, to show the dialog")
   end)
+
+  page:section("TOOLS")
+  page:button("JSON, patterns, hashes, files", "Try", function()
+    status:set(table.concat(require("tryout").offline(), ", "))
+  end)
+  -- These two use addresses from .adds/example/settings.ini: fetch=..., download=... and md5=...
+  page:button("Fetch the address in settings", "Fetch", function()
+    local url = nk.pref("fetch")
+    if not url then return status:set("No fetch= in settings.ini") end
+    status:set("Fetching...")
+    local code, body, why = nk.http.get(url)
+    local answer = body and nk.json.decode(body)
+    status:set(why or ("Got " .. #body .. " bytes" .. (answer and ", JSON" or "")))
+  end)
+  page:button("Download the file in settings", "Download", function()
+    local url = nk.pref("download")
+    if not url then return status:set("No download= in settings.ini") end
+    local ok, why = nk.download(url, "download", {
+      md5 = nk.pref("md5"),
+      progress = function(got, total) status:set("Downloaded " .. got .. " of " .. total) end,
+    })
+    status:set(ok and "Downloaded and checked" or ("Download failed: " .. why))
+  end)
 end)
 
 nk.log("example started")

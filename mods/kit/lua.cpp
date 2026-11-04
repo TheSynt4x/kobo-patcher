@@ -27,15 +27,13 @@
 #include <string.h>
 #include <unistd.h>
 extern "C" {
-#include "vendor/lua/lua.h"
-#include "vendor/lua/lauxlib.h"
 #include "vendor/lua/lualib.h"
 }
 #include "kit.h"
+#include "lua_kit.h"
 
-#define FOLDER "/mnt/onboard/.adds/" NK_NAME
-#define DEV FOLDER "/dev"
-#define PREFS FOLDER "/settings.ini"
+#define DEV NK_FOLDER "/dev"
+#define PREFS NK_FOLDER "/settings.ini"
 
 struct Embedded {
     const char *name;
@@ -134,6 +132,12 @@ static int ref_function(lua_State *co, int index) {
     lua_pushvalue(co, index);
     return luaL_ref(co, LUA_REGISTRYINDEX);
 }
+
+lua_State *kit_lua() { return L; }
+lua_State *kit_task(int fn) { return task(fn); }
+void kit_resume(lua_State *co, int args) { resume(co, args); }
+void kit_must_wait(lua_State *co) { must_wait_here(co); }
+int kit_ref(lua_State *co, int index) { return ref_function(co, index); }
 
 static int l_require(lua_State *co) {
     const char *name = luaL_checkstring(co, 1);
@@ -687,6 +691,7 @@ extern "C" void nk_mod_init(void) {
                                   {"sleep", l_sleep}, {"pref", l_pref}, {"set_pref", l_set_pref}, {"keep", l_keep},
                                   {"require", l_require}, {0, 0}};
     luaL_newlib(L, nk);
+    kit_open_tools(L);
     lua_pushstring(L, NK_NAME);
     lua_setfield(L, -2, "name");
     lua_setglobal(L, "nk");
