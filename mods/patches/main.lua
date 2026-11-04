@@ -1,0 +1,222 @@
+-- "Kobo Patcher" in Settings: every patch for this firmware, switched on and off straight away in
+-- Nickel's memory. The firmware's files aren't changed. The patch list is a file in .adds, so a new
+-- one arrives without reinstalling the mod, and it's read again whenever it changes. Choices are
+-- saved on the Kobo and made again each time Nickel starts, before it has built anything.
+--
+-- And "KOReader" on the More page, when KOReader is in .adds.
+local list = require "list"
+local update = require "update"
+
+local CHOICES = "choices.txt"
+local KOREADER = "/mnt/onboard/.adds/koreader/koreader.sh"
+
+local model, version = nk.device.model(), nk.device.firmware()
+if version == "" then version = "unknown" end
+local ready = nk.patch.ready()
+
+-- Kept when main.lua runs again in development, since the bytes in memory stay as they are.
+local state = nk.keep({choices = {}, order = {}})
+
+-- ---- saved choices: an "id on" or "id off" line for each patch switched here ----
+
+-- Kept by id, apart from the list, so a new list that drops or reorders patches loses nothing.
+local function read_choices()
+  local text = nk.file.read(CHOICES) or ""
+  state.choices_text, state.choices, state.order = text, {}, {}
+  for id, value in text:gmatch("(%S+)%s+(%S+)") do
+    if state.choices[id] == nil then state.order[#state.order + 1] = id end
+    state.choices[id] = value == "on"
+  end
+end
+
+local function choose(patch, on)
+  if state.choices[patch.id] == nil then state.order[#state.order + 1] = patch.id end
+  state.choices[patch.id] = on
+end
+
+local function save_choices()
+  local lines = {}
+  for _, id in ipairs(state.order) do lines[#lines + 1] = id .. (state.choices[id] and " on\n" or " off\n") end
+  local text = table.concat(lines)
+  if nk.file.write(CHOICES, text) then state.choices_text = text else nk.log("couldn't save choices") end
+end
+
+-- The page can change the choices over USB. They're read again, and made, when the file isn't what
+-- this mod last read or wrote.
+local function choices_changed()
+  return (nk.file.read(CHOICES) or "") ~= state.choices_text
+end
+
+-- Patches turned off go first, because patches in a group can share bytes.
+local function apply_choices()
+  for _, on in ipairs({false, true}) do
+    for _, patch in ipairs(state.firmware.patches) do
+      if state.choices[patch.id] == on and nk.patch.state(patch.edits) ~= (on and "on" or "off") then
+        local ok = nk.patch.set(patch.edits, on, patch)
+        nk.log(patch.id .. ": " .. (not ok and "bytes aren't as expected, not changing it" or on and "on" or "off"))
+      end
+    end
+  end
+end
+
+-- ---- the patch list ----
+
+local function list_path() return ("lists/%s-%s.txt"):format(model, version) end
+
+-- Reads the list again if the file has changed since it was last read, and makes the saved
+-- choices for any patches that are new to it. A list that can't be read leaves the last one.
+local function load_list()
+  local text = nk.file.read(list_path())
+  if not text then
+    if not state.firmware then state.list_error = "there's no patch list for this firmware" end
+    return
+  end
+  if state.firmware and text == state.list_text then return end
+  state.list_text = text
+  local loaded, why = list.parse(text)
+  if loaded and (loaded.model ~= model or loaded.version ~= version) then
+    loaded, why = nil, "the patch list is for another Kobo or firmware"
+  end
+  if not loaded then
+    state.list_error = why
+    return nk.log("patch list not read: " .. why)
+  end
+  state.firmware, state.list_error = loaded, nil
+  nk.log(("read %d patches for %s %s"):format(#loaded.patches, model, version))
+  if ready then apply_choices() end
+end
+
+-- ---- the screen ----
+
+local function same_group(a, b) return a ~= b and a.group ~= nil and a.group == b.group end
+
+-- "on", "off", "partly" or "changed" for each patch. One patch in a group being on can make the
+-- others read as changed, when really they're off.
+local function read_states(patches)
+  local rows = {}
+  for i, patch in ipairs(patches) do rows[i] = {state = nk.patch.state(patch.edits)} end
+  for i in ipairs(patches) do
+    for k in ipairs(patches) do
+      local other = rows[k].state
+      if rows[i].state == "changed" and (other == "on" or other == "partly") and same_group(patches[i], patches[k]) then
+        rows[i].state = "off"
+      end
+    end
+  end
+  return rows
+end
+
+local quiet = 0
+
+-- Ticks or unticks without that counting as a tap.
+local function set_quietly(toggle, on)
+  quiet = quiet + 1
+  pcall(toggle.set, toggle, on) -- the screen may have closed
+  quiet = quiet - 1
+end
+
+local function change(patches, rows, i, on)
+  local patch, restart = patches[i], false
+  if on then
+    for k, other in ipairs(patches) do
+      local row = rows[k]
+      if (row.state == "on" or row.state == "partly") and same_group(patch, other) then
+        local ok, again = nk.patch.set(other.edits, false, other)
+        if ok then
+          restart = restart or again
+          row.state = "off"
+          choose(other, false)
+          if row.toggle then set_quietly(row.toggle, false) end
+        end
+      end
+    end
+  end
+  local ok, again = nk.patch.set(patch.edits, on, patch)
+  if not ok then
+    set_quietly(rows[i].toggle, not on)
+    return nk.error("Nothing was changed", "This patch's bytes have changed since this page opened. Close it and open it again.")
+  end
+  nk.log(patch.id .. ": " .. (on and "on" or "off"))
+  rows[i].state = on and "on" or "off"
+  choose(patch, on)
+  save_choices()
+  nk.patch.refresh()
+  if (restart or again) and nk.confirm("Restart to finish",
+      "Your Kobo has already used what this patch changes, so it takes effect after a restart.", "Restart", "Later") then
+    nk.reboot()
+  end
+end
+
+local function build(page)
+  load_list()
+  if choices_changed() then
+    read_choices()
+    if state.firmware and ready then
+      apply_choices()
+      nk.patch.refresh()
+    end
+  end
+  local firmware = state.firmware
+  page:section("THIS KOBO")
+  page:value(firmware and firmware.name or model ~= "" and model or "Unknown model", version)
+  local status
+  status = page:button("New patches and Kobo Patcher", "Check", function()
+    update.check(status, model, version, load_list)
+  end)
+  if not firmware then
+    return page:text(("No patches yet: %s. Connect to Wi-Fi and tap Check, or add them from kobo.thesynt4x.dev."):format(state.list_error))
+  end
+  if not ready then
+    return page:text("This firmware is missing something these patches need, so they're left off.")
+  end
+  page:text("Changes take effect straight away, and stay after a restart. These patches aren't made by Kobo, so use them at your own risk.")
+  local patches = firmware.patches
+  local rows = read_states(patches)
+  -- Each category once, in the order it first comes up, with all of its patches.
+  local categories, seen = {}, {}
+  for _, patch in ipairs(patches) do
+    if not seen[patch.category] then
+      seen[patch.category] = true
+      categories[#categories + 1] = patch.category
+    end
+  end
+  quiet = quiet + 1
+  for _, category in ipairs(categories) do
+    page:section(category)
+    for i, patch in ipairs(patches) do
+      local row = rows[i]
+      -- Bytes that match neither side belong to something else, so they're left alone. Partly on
+      -- shows as off, so turning it on finishes it.
+      if patch.category == category and row.state == "changed" then
+        page:value(patch.title, "Changed")
+      elseif patch.category == category then
+        row.toggle = page:toggle(patch.title, row.state == "on", function(on)
+          if quiet > 0 then return end
+          if on and patch.warning and not nk.confirm(patch.title, patch.warning, "Turn on", "Cancel") then
+            return set_quietly(row.toggle, false)
+          end
+          change(patches, rows, i, on)
+        end)
+      end
+    end
+  end
+  quiet = quiet - 1
+end
+
+if not state.started then
+  state.started = true
+  read_choices()
+  load_list()
+end
+nk.settings("Kobo Patcher", build)
+
+-- KOReader's own launcher stops Nickel, and starts it again when KOReader quits.
+if nk.file.exists(KOREADER) then
+  nk.more("KOReader", "koreader", function()
+    if not nk.file.exists(KOREADER) then
+      return nk.error("KOReader isn't installed", "Add it again from kobo.thesynt4x.dev, then restart your Kobo.")
+    end
+    nk.log("starting KOReader")
+    nk.spawn("exec " .. KOREADER)
+  end)
+end

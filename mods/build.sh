@@ -4,7 +4,7 @@
 # Needs zig 0.17.0, and Python for gen_*.py and plugin names, with PyYAML for the patch list.
 #
 # A mod is a folder of .c and .cpp files, and vendor/*.c, or of Lua: a main.lua, other *.lua and
-# icons/*.png, which are built into the .so, with Lua and the kit's Lua side. Its gen_*.py run
+# icons/*.png, which are built into the .so, with Lua, Monocypher and the kit's Lua side. Its gen_*.py run
 # first, from the folder above it, and write into build/. A plugin file names its Qt plugin class and key, 15 and 4
 # characters, so Qt loads it beside the other mods; without one it gets the kit's.
 #
@@ -72,14 +72,15 @@ if [ -f "$folder/main.lua" ]; then
     i=$((i + 1))
   done
   printf 'static const Embedded embedded[] = {\n%b};\n' "$table" >> "$embedded"
-  for source in "$kit"/vendor/lua/*.c; do
-    object="$out/lua_$(basename "$source" .c).o"
+  for source in "$kit"/vendor/lua/*.c "$kit"/vendor/monocypher/*.c; do
+    object="$out/vendor_$(basename "$source" .c).o"
     zig cc -c $flags -w -o "$object" "$source"
     objects="$objects $object"
   done
   cxx "$kit/lua.cpp" "$out/lua.o"
   cxx "$kit/tools.cpp" "$out/tools.o"
-  objects="$objects $out/lua.o $out/tools.o"
+  cxx "$kit/patch.cpp" "$out/patch.o"
+  objects="$objects $out/lua.o $out/tools.o $out/patch.o"
   libs=-lm
 fi
 link() {

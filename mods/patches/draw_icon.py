@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Write build/koreader_icon.inc, the KOReader row's icon: an open book, drawn to match Kobo's thin
-line icons on the More page."""
+"""Draw icons/koreader.png, the KOReader row's icon: an open book, drawn to match Kobo's thin line
+icons on the More page. It's run by hand, and the picture is kept beside it."""
 import math
 import struct
 import zlib
@@ -55,6 +55,6 @@ def chunk(kind, data):
 
 png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", SIZE, SIZE, 8, 4, 0, 0, 0))
        + chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b""))
-out = Path(__file__).resolve().parents[1] / "build"
+out = Path(__file__).resolve().parent / "icons"
 out.mkdir(exist_ok=True)
-(out / "koreader_icon.inc").write_text(",".join(str(byte) for byte in png) + "\n")
+(out / "koreader.png").write_bytes(png)

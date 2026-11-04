@@ -23,7 +23,7 @@ import { FIRMWARE } from "../web/patches/compiled.js";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MODS = join(ROOT, "web/mods");
 const KEY_FILE = join(homedir(), ".config/kobo-patcher/signing-key.pem");
-const SOURCE = join(ROOT, "mods/patches/update.c");
+const SOURCE = join(ROOT, "mods/patches/update.lua");
 
 const rawPublicKey = (key) => createPublicKey(key).export({ format: "der", type: "spki" }).subarray(-32).toString("hex");
 
@@ -33,7 +33,7 @@ if (process.argv[2] === "--new-key") {
   mkdirSync(dirname(KEY_FILE), { recursive: true });
   writeFileSync(KEY_FILE, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
   console.log(`wrote ${KEY_FILE}. Keep it secret, and put its public half in ${SOURCE}:`);
-  console.log(`#define UPDATE_KEY "${rawPublicKey(privateKey)}"`);
+  console.log(`local UPDATE_KEY = "${rawPublicKey(privateKey)}"`);
   process.exit(0);
 }
 
@@ -45,7 +45,7 @@ if (!pem) {
   process.exit(0);
 }
 const key = createPrivateKey(pem);
-const expected = readFileSync(SOURCE, "utf8").match(/#define UPDATE_KEY "([0-9a-f]{64})"/)?.[1];
+const expected = readFileSync(SOURCE, "utf8").match(/local UPDATE_KEY = "([0-9a-f]{64})"/)?.[1];
 if (rawPublicKey(key) !== expected) throw new Error(`the signing key doesn't match UPDATE_KEY in ${SOURCE}`);
 
 const describe = (path) => {

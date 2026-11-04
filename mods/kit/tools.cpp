@@ -1,11 +1,13 @@
 /* The kit's tools for Lua mods: the network, downloads, Kobo's import, JSON, regular expressions,
- * files and hashes. The safety rules are in the tools, not in the mods:
+ * files, hashes and signatures, the device, and the mod's own file. The safety rules are in the
+ * tools, not in the mods:
  *
  * - nk.http follows redirects (Qt 5.2 doesn't), gives up after a timeout, cuts off an answer over
  *   its limit, and only sends authorization to the host it was meant for.
  * - nk.download writes to a hidden file beside the target, checks its size and hash, and only then
  *   renames it into place, so a book is never half there.
  * - nk.file only reaches /mnt/onboard, and writes go to a new file that's renamed over the old.
+ * - nk.replace_self only installs a build whose SHA-512 the mod already trusts.
  *
  * As in lua.cpp, nothing raises a Lua error while a Qt value made here is still alive. */
 #include <QCryptographicHash>
@@ -31,6 +33,7 @@
 #include <unistd.h>
 #include "kit.h"
 #include "lua_kit.h"
+#include "vendor/monocypher/monocypher-ed25519.h"
 
 #define USER_AGENT "Mozilla/5.0 (Linux; Kobo) " NK_NAME
 #define ONBOARD "/mnt/onboard/"
@@ -764,6 +767,106 @@ static int l_sha1(lua_State *co) { return hash(co, QCryptographicHash::Sha1); }
 static int l_sha256(lua_State *co) { return hash(co, QCryptographicHash::Sha256); }
 static int l_sha512(lua_State *co) { return hash(co, QCryptographicHash::Sha512); }
 
+/* nk.crypto.ed25519_verify(signature, key, message): whether message carries signature from key.
+ * The signature and key are in hex. */
+static int l_ed25519_verify(lua_State *co) {
+    size_t signature_size, key_size, size;
+    const char *signature_hex = luaL_checklstring(co, 1, &signature_size), *key_hex = luaL_checklstring(co, 2, &key_size);
+    const char *message = luaL_checklstring(co, 3, &size);
+    bool ok = false;
+    {
+        QByteArray signature = QByteArray::fromHex(QByteArray(signature_hex, (int)signature_size));
+        QByteArray key = QByteArray::fromHex(QByteArray(key_hex, (int)key_size));
+        if (signature.size() == 64 && key.size() == 32 && signature_size == 128 && key_size == 64)
+            ok = !crypto_ed25519_check(reinterpret_cast<const uint8_t *>(signature.constData()),
+                                       reinterpret_cast<const uint8_t *>(key.constData()), reinterpret_cast<const uint8_t *>(message), size);
+    }
+    lua_pushboolean(co, ok);
+    return 1;
+}
+
+/* ---- nk.device ---- */
+
+static char model[8], firmware[32];
+
+/* .kobo/version is comma-separated: serial, kernel, firmware, ... The serial starts with the model. */
+static void read_version() {
+    static bool done;
+    if (done) return;
+    done = true;
+    char line[256] = "";
+    int fd = open("/mnt/onboard/.kobo/version", O_RDONLY);
+    if (fd < 0) return;
+    ssize_t length = read(fd, line, sizeof line - 1);
+    close(fd);
+    line[length > 0 ? length : 0] = 0;
+    char *kernel = strchr(line, ','), *field = kernel ? strchr(kernel + 1, ',') : 0;
+    if (!field) return;
+    char *end = strpbrk(++field, ",\r\n");
+    if (end) *end = 0;
+    snprintf(model, sizeof model, "%.4s", line);
+    snprintf(firmware, sizeof firmware, "%s", field);
+}
+
+const char *kit_model() {
+    read_version();
+    return model;
+}
+
+const char *kit_firmware() {
+    read_version();
+    return firmware;
+}
+
+static int l_model(lua_State *co) {
+    lua_pushstring(co, kit_model());
+    return 1;
+}
+
+static int l_firmware(lua_State *co) {
+    lua_pushstring(co, kit_firmware());
+    return 1;
+}
+
+/* ---- the mod's own file ---- */
+
+/* nk.self_sha512(): the hash of the mod's .so as installed, or nil. */
+static int l_self_sha512(lua_State *co) {
+    QByteArray hex;
+    {
+        QFile file(QString::fromUtf8(nk_self_path()));
+        if (file.open(QIODevice::ReadOnly)) hex = QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha512).toHex();
+    }
+    if (hex.isEmpty()) lua_pushnil(co);
+    else lua_pushlstring(co, hex.constData(), hex.size());
+    return 1;
+}
+
+/* nk.replace_self(data, sha512): installs data as the mod's new build, for when Nickel next starts,
+ * if it has that hash. Returns whether it did. */
+static int l_replace_self(lua_State *co) {
+    size_t size, hash_size;
+    const char *data = luaL_checklstring(co, 1, &size), *expected = luaL_checklstring(co, 2, &hash_size);
+    bool ok = false;
+    {
+        QByteArray hex = QCryptographicHash::hash(QByteArray::fromRawData(data, (int)size), QCryptographicHash::Sha512).toHex();
+        if (size && hash_size == 128 && hex == QByteArray(expected, (int)hash_size)) ok = nk_replace_self(data, (unsigned)size);
+    }
+    lua_pushboolean(co, ok);
+    return 1;
+}
+
+static int l_reboot(lua_State *) {
+    nk_reboot();
+    return 0;
+}
+
+/* nk.spawn(command): runs a shell command outside Nickel, from /. */
+static int l_spawn(lua_State *co) {
+    nk_spawn(luaL_checkstring(co, 1));
+    return 0;
+}
+
 static void add_library(lua_State *L, const char *name, const luaL_Reg *functions) {
     lua_newtable(L);
     luaL_setfuncs(L, functions, 0);
@@ -775,11 +878,18 @@ void kit_open_tools(lua_State *L) {
     static const luaL_Reg re_functions[] = {{"match", l_match}, {"find", l_find}, {"all", l_all}, {"gsub", l_gsub}, {0, 0}};
     static const luaL_Reg file_functions[] = {{"read", l_read}, {"write", l_write}, {"exists", l_exists}, {"list", l_list},
                                               {"remove", l_remove}, {"mkdir", l_mkdir}, {0, 0}};
-    static const luaL_Reg crypto_functions[] = {{"md5", l_md5}, {"sha1", l_sha1}, {"sha256", l_sha256}, {"sha512", l_sha512}, {0, 0}};
+    static const luaL_Reg crypto_functions[] = {{"md5", l_md5}, {"sha1", l_sha1}, {"sha256", l_sha256}, {"sha512", l_sha512},
+                                                {"ed25519_verify", l_ed25519_verify}, {0, 0}};
+    static const luaL_Reg device_functions[] = {{"model", l_model}, {"firmware", l_firmware}, {0, 0}};
     add_library(L, "http", http_functions);
     add_library(L, "re", re_functions);
     add_library(L, "file", file_functions);
     add_library(L, "crypto", crypto_functions);
+    add_library(L, "device", device_functions);
+    static const luaL_Reg self_functions[] = {{"self_sha512", l_self_sha512}, {"replace_self", l_replace_self}, {"reboot", l_reboot},
+                                              {"spawn", l_spawn}, {0, 0}};
+    luaL_setfuncs(L, self_functions, 0);
+    kit_open_patch(L);
     lua_newtable(L);
     lua_pushcfunction(L, l_decode);
     lua_setfield(L, -2, "decode");

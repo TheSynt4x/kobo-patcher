@@ -1,7 +1,7 @@
 # Mods
 
 Mods add to Kobo's UI using Kobo's own widgets, so a new row or screen looks like it was always there.
-A mod is a small C or C++ file on top of `kit/`. The kit is C++, built against Qt 5.2.1's headers, the Qt that Nickel runs, and uses Nickel's own Qt when it runs. There's no Qt to install: the build fetches the headers.
+A mod is Lua scripts, or a small C or C++ file, on top of `kit/`. `example/` is a Lua mod that shows what the kit can do, with notes. The kit is C++, built against Qt 5.2.1's headers, the Qt that Nickel runs, and uses Nickel's own Qt when it runs. There's no Qt to install: the build fetches the headers.
 
 ```c
 #include "../kit/nk.h"
@@ -34,17 +34,17 @@ A crash after a screen has opened isn't caught.
 
 ## The Patches mod
 
-It adds "Kobo Patcher" at the top of Settings, like other apps' patchers do, and switches patches on and off in Nickel's memory, straight away, and never changes the firmware's files. Each patch's edits are found in libnickel or the nickel program as Nickel has loaded them, and every edit's bytes are checked before any are written. Bytes that match neither side of a patch show as "Changed" and are left alone. A patch with some edits on and some off, as an older version of it leaves the files, shows as off, and switching it finishes or undoes it.
+It's all Lua, in `patches/`. It adds "Kobo Patcher" at the top of Settings, like other apps' patchers do, and switches patches on and off in Nickel's memory, straight away, and never changes the firmware's files. Each patch's edits are found in libnickel or the nickel program as Nickel has loaded them, and every edit's bytes are checked before any are written. Bytes that match neither side of a patch show as "Changed" and are left alone. A patch with some edits on and some off, as an older version of it leaves the files, shows as off, and switching it finishes or undoes it.
 
 The patch list is a file, `/mnt/onboard/.adds/patches/lists/<model>-<firmware>.txt`, written by `tools/write_lists.py`. It's read when Nickel starts and again whenever Kobo Patcher opens and the file has changed, so new patches arrive without reinstalling the mod. Every line is checked, and edits may only touch libnickel and the nickel program.
 
-"New patches and Kobo Patcher" checks for updates over Wi-Fi, through Qt's own network code. It downloads `mods/manifest.txt` from the site, which `tools/sign_mods.mjs` signs with an Ed25519 key, and refuses it unless the signature matches `UPDATE_KEY` in `update.c` ([Monocypher](patches/vendor/README.md) checks it). Every other file has to match the SHA-512 and size the manifest gives it. A new patch list is saved straight away. A new mod is only offered on the firmware the manifest names, the ones marked `mod: true` in `patches.yaml`, and installs with a restart. Because of the signature, a TLS error is ignored, and plain HTTP is tried if TLS can't be used at all.
+"New patches and Kobo Patcher" checks for updates over Wi-Fi, through Qt's own network code. It downloads `mods/manifest.txt` from the site, which `tools/sign_mods.mjs` signs with an Ed25519 key, and refuses it unless the signature matches `UPDATE_KEY` in `patches/update.lua` ([Monocypher](kit/vendor/monocypher/README.md) checks it, through `nk.crypto.ed25519_verify`). Every other file has to match the SHA-512 and size the manifest gives it. A new patch list is saved straight away. A new mod is only offered on the firmware the manifest names, the ones marked `mod: true` in `patches.yaml`, and installs with a restart. Because of the signature, plain HTTP is tried if TLS doesn't work.
 
 To test without a cable, run `make mods` and `make serve LAN=1`, and put the address it prints in `.adds/patches/update-url` on the Kobo. Check then updates from your computer. Only builds signed with the key are taken, so this needs the key in `~/.config/kobo-patcher/signing-key.pem`.
 
 Choices are saved in `/mnt/onboard/.adds/patches/choices.txt`, one `id on` or `id off` line for each patch switched on the Kobo, and made again when Nickel starts, before it has built anything. Patches that were never switched there stay as the files have them, so a Kobo patched the old way still works.
 
-Most patches change code Nickel runs again whenever it's needed. For the rest, `live.c` gives the nudge Nickel itself would:
+Most patches change code Nickel runs again whenever it's needed. For the rest, the kit's `nk.patch` (`kit/patch.cpp`) gives the nudge Nickel itself would:
 
 - The bottom bar, the More page and the home screen are asked to update.
 - A changed stylesheet is set again on the widgets showing the old one, found by its text, because Kobo's `setStyleSheetFile` doesn't keep the file's name. Widgets the old one hid with `qproperty-visible: false` are shown again.

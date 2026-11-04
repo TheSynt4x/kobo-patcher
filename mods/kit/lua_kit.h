@@ -22,5 +22,12 @@ int kit_ref(lua_State *co, int index);
 
 /* tools.cpp: adds the tools to the nk table on top of the stack. */
 void kit_open_tools(lua_State *L);
+/* patch.cpp: adds nk.patch the same way. */
+void kit_open_patch(lua_State *L);
+
+/* This Kobo's model, from the start of its serial, like "N306", and its firmware, like
+ * "4.38.23852". Empty when .kobo/version can't be read. */
+const char *kit_model();
+const char *kit_firmware();
 
 #endif
