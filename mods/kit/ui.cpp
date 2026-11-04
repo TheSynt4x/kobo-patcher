@@ -746,50 +746,17 @@ static int field_set(lua_State *co) {
 
 /* ---- the tab ---- */
 
-typedef int (*IntOf)(const void *self);
 typedef void (*Turn)(void *self);
 typedef void (*PointOf)(QPoint *out, const void *self);
 
-/* A tab's page: a PagingContainer that turns a page for each drag up or down, or across, with
- * "Page 2 of 5" under it while there's more than one. Kobo's paging bar is hidden, so the blocks
- * have the page's whole width. */
+/* A tab's page: a PagingContainer that turns a page for each drag up or down, or across. Kobo's
+ * paging bar stays, at the page's right edge as in My Books. */
 class TabPage : public QWidget {
 public:
     TabPage() : QWidget(0) {}
     QPointer<QWidget> paging;
-    QPointer<QLabel> pages;
-
-    void count_pages() {
-        static IntOf page_of, count_of;
-        if (!page_of) page_of = reinterpret_cast<IntOf>(nickel("_ZNK15PagingContainer7getPageEv"));
-        if (!count_of) count_of = reinterpret_cast<IntOf>(nickel("_ZNK15PagingContainer8numPagesEv"));
-        if (!paging || !pages || !page_of || !count_of) return;
-        /* Kobo sets up its bar as it pages, so it's put away each time. */
-        QWidget *bar = paging->findChild<QWidget *>(QStringLiteral("pagingScrollBar"));
-        if (bar) {
-            bar->setFixedWidth(0);
-            bar->hide();
-        }
-        int page = page_of(paging), count = count_of(paging);
-        if (page < count) page++; /* from 0 */
-        pages->setText(QStringLiteral("Page %1 of %2").arg(page).arg(count));
-        pages->setVisible(count > 1);
-    }
 
 protected:
-    void showEvent(QShowEvent *event) override {
-        QWidget::showEvent(event);
-        /* The pages are counted once they're laid out, which is after they're shown. */
-        QPointer<TabPage> self(this);
-        QTimer *soon = new QTimer();
-        soon->setSingleShot(true);
-        QObject::connect(soon, &QTimer::timeout, [self, soon]() {
-            soon->deleteLater();
-            if (self) self->count_pages();
-        });
-        soon->start(0);
-    }
-
     bool event(QEvent *event) override {
         static int *drag_type;
         static PointOf begin, end;
@@ -810,10 +777,7 @@ protected:
             static Turn next, prev;
             if (!next) next = reinterpret_cast<Turn>(nickel("_ZN15PagingContainer8nextPageEv"));
             if (!prev) prev = reinterpret_cast<Turn>(nickel("_ZN15PagingContainer8prevPageEv"));
-            if (qAbs(along) > px(40) && next && prev) {
-                (along > 0 ? next : prev)(paging);
-                count_pages();
-            }
+            if (qAbs(along) > px(40) && next && prev) (along > 0 ? next : prev)(paging);
         }
         return true;
     }
@@ -893,8 +857,9 @@ static TabPage *make_tab_page() {
     if (drag_type) page->grabGesture(Qt::GestureType(*drag_type));
     QVBoxLayout *column = new QVBoxLayout(page);
     bool over = tab_stack && !tab_stack->isEmpty();
-    /* Below the status bar, with the margins of Kobo's More page. */
-    column->setContentsMargins(px(40), over ? px(76) : px(84), px(40), px(8));
+    /* Below the status bar, with the left margin of Kobo's More page. On the right, Kobo's paging
+     * bar is the margin. */
+    column->setContentsMargins(px(40), over ? px(76) : px(84), 0, px(8));
     column->setSpacing(0);
     if (over) {
         /* Kobo's back arrow, in a square to tap centred on it, the size of its dialogs' own. The
@@ -913,11 +878,6 @@ static TabPage *make_tab_page() {
     paging_ctor(paging, page);
     page->paging = paging;
     column->addWidget(paging, 1);
-    QLabel *pages = kobo_label(page, "MetaDataLabel", QString());
-    pages->setAlignment(Qt::AlignRight);
-    pages->hide();
-    page->pages = pages;
-    column->addWidget(pages, 0);
     kit_build_page(static_cast<PagingContainer *>(paging), over ? tab_stack->last() : tab.build, true);
     /* Both are Discover to Kobo, so only the one showing is lit. */
     tab.open = true;
