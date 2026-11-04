@@ -55,9 +55,11 @@ void kit_build_page(PagingContainer *paging, int build, bool tab);
 /* Before a place opens: false, with the error shown, if the mod couldn't start. In development it
  * runs main.lua again first if a script has changed. */
 bool kit_ready_to_open();
-/* ui.cpp: opens the tab again, built afresh. */
+/* One of the mod's own files, built into the .so: a script, or icons/<name>.png. */
+bool kit_embedded(const char *name, const unsigned char **data, unsigned *size);
+/* ui.cpp: opens the tab that's showing again, built afresh. */
 void kit_reopen_tab();
-/* ui.cpp: if the tab is showing, back to its first page, built afresh. False if it isn't. */
+/* ui.cpp: if one of the mod's tabs is showing, back to its first page, built afresh. False if none is. */
 bool kit_reload_tab();
 
 /* ui.cpp: a label's text, for Kobo's elided labels too. */

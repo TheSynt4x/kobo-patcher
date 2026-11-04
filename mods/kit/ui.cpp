@@ -7,9 +7,9 @@
  *   subclass of that base first, so no firmware gets a label that's more than it seems.
  * - Text boxes are Kobo's SearchEditBox and TouchLineEdit, typed in with Kobo's keyboard: the one
  *   a screen's N3Dialog keeps, or on a tab one over the page's lower part, as Kobo's search has.
- * - The tab is a MainNavButton after Kobo's Discover button, with Discover's icons and name, so the
- *   no-discover patch can make room for it. Its page is a MoreController whose loadView makes the
- *   page here and whose navSection is Discover's, so Nickel lights the tab while it's shown.
+ * - Tabs are MainNavButtons in Kobo's bottom bar, after or before one of Kobo's own, each with the
+ *   mod's name and icons. A tab's page is a MoreController whose loadView makes the page here. Its
+ *   navSection is Discover's, and the light moves from Discover's button to the tab's.
  * - Pages turn as Kobo's settings do: a PagingContainer, moved a page at a time by dragging.
  * - Nickel's functions are looked up by name when they're first used, not linked, so a firmware
  *   without one loses only what needs it. Mods that use none of this, like Kobo Patcher, still load.
@@ -23,6 +23,7 @@
 #include <QFrame>
 #include <QGestureEvent>
 #include <QHash>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
@@ -783,50 +784,63 @@ protected:
     }
 };
 
-static struct {
-    char *title; /* or 0 for Discover's own */
+/* A tab in Kobo's bottom bar, and the pages opened over its first, by build function, the last on
+ * top. Each mod's kit keeps its own tabs, and its pages say whose they are, so one mod's tabs never
+ * touch another's. */
+struct Tab {
+    QString name, icon; /* icons/<icon>.png, and icons/<icon>-active.png if there is one */
+    QString after, before;           /* Kobo's sections, like "discover"; neither means before More */
     int build;
+    QList<int> stack;
     QPointer<QWidget> button;
-    bool discover_active, open;
-} tab;
+};
+static QList<Tab *> *tabs;
+static Tab *shown;        /* whose page is showing, or 0 */
+static QWidget *shown_page;
+static Tab *opening;      /* whose page the next loadView makes */
+static bool discover_lit; /* Kobo's own light for Discover, whose section a tab borrows */
 
 static void light_buttons();
-static void open_tab(void *);
+static QString icon_file(const QString &name);
+static void open_tab(Tab *t);
 
-/* The pages opened over the tab's first, by build function, the last on top. */
 static lua_State *ui_lua;
-static QList<int> *tab_stack;
 
-static void close_pages(int keep) {
-    while (tab_stack && tab_stack->size() > keep) luaL_unref(ui_lua, LUA_REGISTRYINDEX, tab_stack->takeLast());
+static void close_pages(Tab *t, int keep) {
+    while (t->stack.size() > keep) luaL_unref(ui_lua, LUA_REGISTRYINDEX, t->stack.takeLast());
 }
 
 /* Once the tap that asked is done, as the widget it came from goes with the page. */
-static void reopen_soon() {
+static void reopen_soon(Tab *t) {
     QTimer *soon = new QTimer();
     soon->setSingleShot(true);
-    QObject::connect(soon, &QTimer::timeout, [soon]() {
+    QObject::connect(soon, &QTimer::timeout, [soon, t]() {
         soon->deleteLater();
-        open_tab(0);
+        open_tab(t);
     });
     soon->start(0);
 }
 
-static void back_tapped(void *) {
-    if (tab_stack && !tab_stack->isEmpty()) close_pages(tab_stack->size() - 1);
-    reopen_soon();
+static void back_tapped(void *arg) {
+    Tab *t = static_cast<Tab *>(arg);
+    if (!t->stack.isEmpty()) close_pages(t, t->stack.size() - 1);
+    reopen_soon(t);
 }
 
 /* Tapping the tab in the bar goes back to its first page, as Kobo's own tabs do. */
-static void tab_tapped(void *) {
-    close_pages(0);
-    open_tab(0);
+static void tab_tapped(void *arg) {
+    Tab *t = static_cast<Tab *>(arg);
+    close_pages(t, 0);
+    open_tab(t);
 }
 
-static bool in_tab(QWidget *widget) {
+/* The tab of this kit whose page the widget is on, or 0. Another mod's tab pages have the same name,
+ * for the stylesheet, but a different kit. */
+static Tab *tab_of(QWidget *widget) {
     for (QWidget *w = widget; w; w = w->parentWidget())
-        if (w->objectName() == QLatin1String("nkTabPage")) return true;
-    return false;
+        if (w->objectName() == QLatin1String("nkTabPage"))
+            return w->property("nkKit").value<quintptr>() == quintptr(&tabs) ? reinterpret_cast<Tab *>(w->property("nkTab").value<quintptr>()) : 0;
+    return 0;
 }
 
 /* page:open(build): a page of the tab's own over this one, built by build(page), with Kobo's
@@ -834,17 +848,19 @@ static bool in_tab(QWidget *widget) {
 static int page_open(lua_State *co) {
     PagingContainer *paging = kit_check_page(co);
     luaL_checktype(co, 2, LUA_TFUNCTION);
-    if (!in_tab(reinterpret_cast<QWidget *>(paging))) return luaL_error(co, "page:open is for a tab's pages");
-    if (!tab_stack) tab_stack = new QList<int>;
+    Tab *t = tab_of(reinterpret_cast<QWidget *>(paging));
+    if (!t) return luaL_error(co, "page:open is for a tab's pages");
     lua_pushvalue(co, 2);
-    *tab_stack << luaL_ref(co, LUA_REGISTRYINDEX);
-    reopen_soon();
+    t->stack << luaL_ref(co, LUA_REGISTRYINDEX);
+    reopen_soon(t);
     return 0;
 }
 
-static TabPage *make_tab_page() {
+static TabPage *make_tab_page(Tab *t) {
     TabPage *page = new TabPage();
     page->setObjectName(QStringLiteral("nkTabPage"));
+    page->setProperty("nkKit", quintptr(&tabs));
+    page->setProperty("nkTab", quintptr(t));
     page->setAttribute(Qt::WA_StyledBackground);
     /* Kobo's style pads some labels to fit its own layouts; a tab's blocks line up on their own. */
     page->setStyleSheet(QStringLiteral("#nkTabPage { background-color: white; } #nkTabPage QLabel { padding: 0px; }"));
@@ -856,7 +872,7 @@ static TabPage *make_tab_page() {
     if (!drag_type) drag_type = static_cast<int *>(nickel("_ZN21DragGestureRecognizer12_gestureTypeE"));
     if (drag_type) page->grabGesture(Qt::GestureType(*drag_type));
     QVBoxLayout *column = new QVBoxLayout(page);
-    bool over = tab_stack && !tab_stack->isEmpty();
+    bool over = !t->stack.isEmpty();
     /* Below the status bar, with the left margin of Kobo's More page. On the right, Kobo's paging
      * bar is the margin. */
     column->setContentsMargins(px(40), over ? px(76) : px(84), 0, px(8));
@@ -865,7 +881,7 @@ static TabPage *make_tab_page() {
         /* Kobo's back arrow, in a square to tap centred on it, the size of its dialogs' own. The
          * arrow keeps to the page's left edge, so the square sits over the margin. */
         QPixmap arrow(QStringLiteral(":/images/reading/back_arrow.png"));
-        QLabel *back = tap_square(page, arrow, 78, back_tapped, 0);
+        QLabel *back = tap_square(page, arrow, 78, back_tapped, t);
         if (arrow.isNull()) back->setText(QStringLiteral("‹"));
         int arrow_width = arrow.isNull() ? px(32) : arrow.width();
         back->move(px(40) + arrow_width / 2 - back->width() / 2, px(76) + px(32) - back->height() / 2);
@@ -878,12 +894,15 @@ static TabPage *make_tab_page() {
     paging_ctor(paging, page);
     page->paging = paging;
     column->addWidget(paging, 1);
-    kit_build_page(static_cast<PagingContainer *>(paging), over ? tab_stack->last() : tab.build, true);
-    /* Both are Discover to Kobo, so only the one showing is lit. */
-    tab.open = true;
+    kit_build_page(static_cast<PagingContainer *>(paging), over ? t->stack.last() : t->build, true);
+    shown = t;
+    shown_page = page;
     light_buttons();
-    QObject::connect(page, &QObject::destroyed, [] {
-        tab.open = false;
+    QObject::connect(page, &QObject::destroyed, [page] {
+        /* Not when this tab's own page is opened again, which is made before the old one goes. */
+        if (shown_page != page) return;
+        shown = 0;
+        shown_page = 0;
         light_buttons();
     });
     return page;
@@ -892,11 +911,13 @@ static TabPage *make_tab_page() {
 /* The controller's loadView, as MoreController's: make the view and keep a QPointer to it. */
 static void tab_load_view(void *self) {
     void **controller = static_cast<void **>(self);
-    QWidget *page = make_tab_page();
+    QWidget *page = make_tab_page(opening);
     controller[3] = QtSharedPointer::ExternalRefCountData::getAndRef(page);
     controller[4] = page;
 }
 static void tab_load_view_thunk(void *self) { tab_load_view(static_cast<char *>(self) - 8); }
+/* A tab borrows Discover's section, and light_buttons moves the light from Discover's button to
+ * the tab's. */
 enum { DISCOVER_SECTION = 5, VTABLE_SLOTS = 64 };
 static int tab_section(const void *) { return DISCOVER_SECTION; }
 
@@ -917,8 +938,8 @@ static int replace_slot(void **vtable, void *from, void *to) {
 typedef void (*Clear)(MainWindowController *window, AbstractController *controller, bool animate);
 
 /* What Kobo's More tab does: a new controller replaces what's above the bar. */
-static void open_tab(void *) {
-    if (!kit_ready_to_open()) return;
+static void open_tab(Tab *t) {
+    if (!t || !kit_ready_to_open()) return;
     void *ctor = nickel("_ZN14MoreControllerC1Ev"), *load = nickel("_ZN14MoreController8loadViewEv");
     void *load_thunk = nickel("_ZThn8_N14MoreController8loadViewEv"), *section = nickel("_ZNK14MoreController10navSectionEv");
     void *section_thunk = nickel("_ZThn8_NK14MoreController10navSectionEv");
@@ -943,17 +964,20 @@ static void open_tab(void *) {
     }
     controller[0] = primary;
     controller[2] = abstract;
+    opening = t;
     nk_failsafe(30);
     clear(MainWindowController::sharedInstance(), reinterpret_cast<AbstractController *>(controller + 2), false);
 }
 
-void kit_reopen_tab() { open_tab(0); }
+void kit_reopen_tab() { open_tab(shown); }
 
 bool kit_reload_tab() {
     foreach (QWidget *w, QApplication::allWidgets()) {
-        if (w->objectName() != QLatin1String("nkTabPage") || !w->isVisible()) continue;
-        close_pages(0);
-        open_tab(0);
+        if (!w->isVisible()) continue;
+        Tab *t = w->objectName() == QLatin1String("nkTabPage") ? tab_of(w) : 0;
+        if (!t) continue;
+        close_pages(t, 0);
+        open_tab(t);
         return true;
     }
     return false;
@@ -964,68 +988,151 @@ typedef void (*SetActive)(void *self, bool active);
 static ViewCtor real_nav_view;
 static SetActive real_discover_active;
 
-/* Kobo's bottom bar: the tab goes after Kobo's Discover button, with its share of the bar. */
+static const char *const SECTIONS[] = {"home", "books", "discover", "notebooks", "activity", "more", 0};
+
+static bool is_section(const QString &name) {
+    for (int i = 0; SECTIONS[i]; i++)
+        if (name == QLatin1String(SECTIONS[i])) return true;
+    return false;
+}
+
+/* Where a tab's button goes in the bar's row: after or before Kobo's button for a section, and after
+ * any tabs already there, so tabs keep the order they were made in. -1 if that button isn't there. */
+static int place_in(QBoxLayout *row, QWidget *view, Tab *t, QWidget **beside) {
+    QString section = !t->after.isEmpty() ? t->after : !t->before.isEmpty() ? t->before : QStringLiteral("more");
+    QWidget *kobo = view->findChild<QWidget *>(section + QStringLiteral("Button"));
+    int at = kobo ? row->indexOf(kobo) : -1;
+    if (at < 0) return -1;
+    *beside = kobo;
+    if (t->after.isEmpty()) return at;
+    for (at++; at < row->count(); at++) {
+        QWidget *next = row->itemAt(at)->widget();
+        if (!next || next->objectName() != QLatin1String("nkTabButton")) break;
+    }
+    return at;
+}
+
+/* Kobo's bottom bar: each tab's button goes in where the tab asked, with the share of the bar of
+ * the Kobo button beside it. */
 static void hooked_nav_view(void *self, QWidget *parent) {
     real_nav_view(self, parent);
     QWidget *view = static_cast<QWidget *>(self);
-    QWidget *discover = view->findChild<QWidget *>(QStringLiteral("discoverButton"));
     QBoxLayout *row = view->findChild<QBoxLayout *>(QStringLiteral("mainNavLayout"));
     WidgetCtor button_ctor = reinterpret_cast<WidgetCtor>(nickel("_ZN13MainNavButtonC1EP7QWidget"));
     SetText set_pixmap = reinterpret_cast<SetText>(nickel("_ZN13MainNavButton9setPixmapERK7QString"));
     SetText set_active_pixmap = reinterpret_cast<SetText>(nickel("_ZN13MainNavButton15setActivePixmapERK7QString"));
     SetText set_text = reinterpret_cast<SetText>(nickel("_ZN13MainNavButton7setTextERK7QString"));
-    if (!discover || !row || !button_ctor || !set_pixmap || !set_active_pixmap || !set_text) {
-        nk_log("the bottom bar isn't as expected, no tab");
+    if (!row || !button_ctor || !set_pixmap || !set_active_pixmap || !set_text) {
+        nk_log("the bottom bar isn't as expected, no tabs");
         return;
     }
-    QString text = tab.title ? QString::fromUtf8(tab.title) : QStringLiteral("Discover");
-    QList<QLabel *> labels = discover->findChildren<QLabel *>();
-    if (!tab.title && !labels.isEmpty() && !labels.last()->text().isEmpty()) text = labels.last()->text();
-    QWidget *button = static_cast<QWidget *>(alloc(0x100)); /* 0x7c on 4.38 */
-    button_ctor(button, view);
-    button->setObjectName(QStringLiteral("nkTabButton"));
-    set_pixmap(button, QStringLiteral(":/images/home/main_nav_discover.png"));
-    set_active_pixmap(button, QStringLiteral(":/images/home/main_nav_discover_active.png"));
-    set_text(button, text);
-    int at = row->indexOf(discover);
-    button->setSizePolicy(discover->sizePolicy());
-    button->setMinimumSize(discover->minimumSize());
-    button->setMaximumSize(discover->maximumSize());
-    row->insertWidget(at + 1, button, row->stretch(at));
-    nk_connect(button, "_ZN13MainNavButton6tappedEv", "_ZN13MainNavButton16staticMetaObjectE", tab_tapped, 0);
-    tab.button = button;
-    nk_log("tab added");
+    foreach (Tab *t, *tabs) {
+        QWidget *beside = 0;
+        int at = place_in(row, view, t, &beside);
+        if (at < 0) {
+            nk_log("no place in the bottom bar for the tab %s", t->name.toUtf8().constData());
+            continue;
+        }
+        QWidget *button = static_cast<QWidget *>(alloc(0x100)); /* 0x7c on 4.38 */
+        button_ctor(button, view);
+        button->setObjectName(QStringLiteral("nkTabButton"));
+        QString icon = icon_file(t->icon), active = icon_file(t->icon + QStringLiteral("-active"));
+        set_pixmap(button, icon);
+        set_active_pixmap(button, active.isEmpty() ? icon : active);
+        set_text(button, t->name);
+        button->setSizePolicy(beside->sizePolicy());
+        button->setMinimumSize(beside->minimumSize());
+        button->setMaximumSize(beside->maximumSize());
+        row->insertWidget(at, button, row->stretch(row->indexOf(beside)));
+        nk_connect(button, "_ZN13MainNavButton6tappedEv", "_ZN13MainNavButton16staticMetaObjectE", tab_tapped, t);
+        t->button = button;
+        nk_log("tab %s added", t->name.toUtf8().constData());
+    }
 }
 
 static void *nav_view;
 
+/* Kobo lights Discover while a tab's page shows, as the tab borrows its section. The light goes to
+ * the tab's button instead. With another mod's tabs, its kit hooked this too, and passes on
+ * Discover's light only when none of its own tabs is showing. */
 static void light_buttons() {
     static SetActive set_active;
     if (!set_active) set_active = reinterpret_cast<SetActive>(nickel("_ZN13MainNavButton9setActiveEb"));
-    if (nav_view) real_discover_active(nav_view, tab.discover_active && !tab.open);
-    if (tab.button && set_active) set_active(tab.button, tab.discover_active && tab.open);
+    if (nav_view) real_discover_active(nav_view, discover_lit && !shown);
+    if (!set_active) return;
+    foreach (Tab *t, *tabs)
+        if (t->button) set_active(t->button, discover_lit && t == shown);
 }
 
 static void hooked_discover_active(void *self, bool active) {
     nav_view = self;
-    tab.discover_active = active;
+    discover_lit = active;
     light_buttons();
 }
 
-/* nk.tab(title, build): a tab in the bottom bar, after Discover, opening a page built by
- * build(page). With no title it takes Discover's name, in Kobo's language. Call it from main.lua. */
+/* A bar icon from the mod's icons/<name>.png, as a file for Kobo's button to load, scaled to the
+ * height of Kobo's own: 28 pixels on the Nia. Drawn larger, it stays sharp on denser screens. Only
+ * once Kobo builds the bar: decoding a PNG while Qt is still loading this plugin waits on Qt's own
+ * plugin loader, for ever. */
+static QString icon_file(const QString &name) {
+    const unsigned char *data;
+    unsigned size;
+    QByteArray embedded = "icons/" + name.toUtf8() + ".png";
+    if (!kit_embedded(embedded.constData(), &data, &size)) return QString();
+    QImage image;
+    if (!image.loadFromData(data, int(size), "PNG")) return QString();
+    QString path = QStringLiteral("/tmp/nk-%1-%2.png").arg(quintptr(&tabs), 0, 16).arg(name);
+    image = image.scaled(px(28), px(28), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    return image.save(path, "PNG") ? path : QString();
+}
+
+static QString field(lua_State *co, const char *name) {
+    lua_getfield(co, 1, name);
+    QString value = lua_isnil(co, -1) ? QString() : QString::fromUtf8(luaL_checkstring(co, -1));
+    lua_pop(co, 1);
+    return value;
+}
+
+/* nk.tab{name = , icon = , after = or before = , build = }: a tab in Kobo's bottom bar, opening a
+ * page built by build(page). The icon is icons/<icon>.png, and icons/<icon>-active.png while the
+ * tab is open if there is one. after or before name one of Kobo's sections (home, books, discover,
+ * notebooks, activity, more), and without either it goes before More. A mod can have several tabs.
+ * Call it from main.lua: running it again with the same name gives that tab the new build. */
 static int l_tab(lua_State *co) {
-    const char *title = lua_isnoneornil(co, 1) ? 0 : luaL_checkstring(co, 1);
-    luaL_checktype(co, 2, LUA_TFUNCTION);
-    lua_pushvalue(co, 2);
+    luaL_checktype(co, 1, LUA_TTABLE);
+    QString name = field(co, "name"), icon = field(co, "icon"), after = field(co, "after"), before = field(co, "before");
+    if (name.isEmpty()) return luaL_error(co, "nk.tab needs a name");
+    if (icon.isEmpty()) return luaL_error(co, "nk.tab needs an icon");
+    if (!after.isEmpty() && !before.isEmpty()) return luaL_error(co, "nk.tab takes after or before, not both");
+    if (!after.isEmpty() && !is_section(after)) return luaL_error(co, "nk.tab: no section %s", after.toUtf8().constData());
+    if (!before.isEmpty() && !is_section(before)) return luaL_error(co, "nk.tab: no section %s", before.toUtf8().constData());
+    lua_getfield(co, 1, "build");
+    luaL_checktype(co, -1, LUA_TFUNCTION);
     int build = luaL_ref(co, LUA_REGISTRYINDEX);
-    if (tab.build) luaL_unref(co, LUA_REGISTRYINDEX, tab.build);
-    tab.build = build;
+    if (!tabs) tabs = new QList<Tab *>;
+    foreach (Tab *t, *tabs) {
+        if (t->name != name) continue;
+        luaL_unref(co, LUA_REGISTRYINDEX, t->build);
+        t->build = build;
+        return 0;
+    }
+    const unsigned char *png;
+    unsigned png_size;
+    if (!kit_embedded(("icons/" + icon.toUtf8() + ".png").constData(), &png, &png_size)) {
+        luaL_unref(co, LUA_REGISTRYINDEX, build);
+        return luaL_error(co, "no icons/%s.png", icon.toUtf8().constData());
+    }
+    Tab *t = new Tab;
+    t->name = name;
+    t->icon = icon;
+    t->after = after;
+    t->before = before;
+    t->build = build;
+    *tabs << t;
     if (real_nav_view) return 0;
-    if (title) tab.title = strdup(title);
     real_nav_view = reinterpret_cast<ViewCtor>(nk_hook("_ZN11MainNavViewC1EP7QWidget", reinterpret_cast<void *>(hooked_nav_view)));
     real_discover_active = reinterpret_cast<SetActive>(nk_hook("_ZN11MainNavView17setDiscoverActiveEb", reinterpret_cast<void *>(hooked_discover_active)));
-    if (!real_nav_view || !real_discover_active) nk_log("couldn't hook the bottom bar, no tab");
+    if (!real_nav_view || !real_discover_active) nk_log("couldn't hook the bottom bar, no tabs");
     return 0;
 }
 

@@ -27,7 +27,8 @@ Build it with `mods/build.sh <folder>`, which needs zig 0.17.0, curl the first t
 
 - Every symbol the mod uses is checked when Nickel loads it, before the mod does anything. The build lists them: what the `.so` leaves undefined, and the names the kit looks up. If one is missing, the mod does nothing and there's no crash.
 - Before a screen opens, the controller's vtable is compared with what's expected.
-- If Nickel crashes while a mod starts or opens a screen, or soon after `nk_failsafe`, the mod is moved to `/usr/local/Kobo/<name>.disabled` and isn't loaded again. The Kobo may freeze or restart first. If it's stuck, hold power for about 15 seconds and turn it on again. Nickel exiting normally, `nk_reboot`, or a command from `nk_spawn` stopping Nickel, doesn't count as a crash.
+- If Nickel crashes or freezes while a mod starts or opens a screen, or soon after `nk_failsafe`, the mod is moved to `/usr/local/Kobo/<name>.disabled` and isn't loaded again. It's only put back once Nickel's main thread has kept running for a while, so a freeze counts too. The Kobo may freeze or restart first. If it's stuck, hold power for about 15 seconds and turn it on again.
+- Nothing a mod runs while it loads may decode an image or use Qt's plugins: that's `main.lua`'s top level, and the kit calls made there. Mods are Qt image plugins, loaded while Qt's plugin loader holds its lock, so decoding a PNG then waits on that lock for ever, and Nickel never starts. Kit calls like `nk.tab` only record what they're asked for, and do the rest when Kobo builds its screens. Nickel exiting normally, `nk_reboot`, or a command from `nk_spawn` stopping Nickel, doesn't count as a crash.
 - `/mnt/onboard/.adds/<name>/uninstall` removes the mod the next time Nickel starts.
 
 A crash after a screen has opened isn't caught.

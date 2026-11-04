@@ -7,6 +7,7 @@
  * firmware missing one gets nothing at all rather than a crash when it's first called. */
 #include <QBoxLayout>
 #include <QCheckBox>
+#include <QCoreApplication>
 #include <QDialog>
 #include <QFontMetrics>
 #include <QLabel>
@@ -14,6 +15,7 @@
 #include <QPixmap>
 #include <QSharedPointer>
 #include <QString>
+#include <QTimer>
 #include <QVariant>
 #include <QWidget>
 #include <dlfcn.h>
@@ -659,14 +661,18 @@ extern "C" __attribute__((visibility("default"))) const char *qt_plugin_query_me
 
 extern "C" __attribute__((visibility("default"))) void *qt_plugin_instance(void) { return 0; }
 
-/* A mod that crashes Nickel mustn't stop the Kobo starting. The file is moved away while it's being
- * tried, so a crash means it isn't loaded next time, and it's put back after a quiet while. Each move
- * is synced, because a frozen Kobo gets held off, and an unsynced move can be lost with the power. */
+/* A mod that crashes or freezes Nickel mustn't stop the Kobo starting. The file is moved away while
+ * it's being tried, so a crash, or a freeze that ends with the power held off, means it isn't loaded
+ * next time. It's put back once Nickel's main thread has carried on for a quiet while: the guard's
+ * thread only puts it back after a heartbeat from the main thread's event loop, so time passing
+ * while Nickel is frozen doesn't count. Each move is synced, because a frozen Kobo gets held off, and
+ * an unsynced move can be lost with the power. */
 static void failsafe_arm(void) { rename(INSTALLED_AT, DISABLED_AT); sync(); }
 static void failsafe_clear(void) { rename(DISABLED_AT, INSTALLED_AT); sync(); }
 
 static pthread_mutex_t failsafe_lock = PTHREAD_MUTEX_INITIALIZER;
 static long failsafe_until; /* while this is set, a thread clears the guard once it's passed */
+static long alive_at;       /* when the main thread's event loop last ran, from its heartbeat */
 
 static long now(void) {
     struct timespec t;
@@ -678,7 +684,7 @@ static void *failsafe_wait(void *) {
     for (;;) {
         pthread_mutex_lock(&failsafe_lock);
         long left = failsafe_until - now();
-        if (left <= 0) {
+        if (left <= 0 && __atomic_load_n(&alive_at, __ATOMIC_ACQUIRE) >= failsafe_until) {
             failsafe_until = 0;
             failsafe_clear();
             pthread_mutex_unlock(&failsafe_lock);
@@ -686,8 +692,21 @@ static void *failsafe_wait(void *) {
             return 0;
         }
         pthread_mutex_unlock(&failsafe_lock);
-        sleep(left);
+        sleep(left > 0 ? left : 1);
     }
+}
+
+/* The main thread's heartbeat: a timer on its event loop, which only fires while Nickel is running.
+ * Without Qt's application yet there's no event loop to prove, so the guard stays set, and the mod
+ * isn't loaded next time, which the log says. */
+static void start_heartbeat(void) {
+    if (!QCoreApplication::instance()) {
+        nk_log("no Qt application yet, so the guard can't tell Nickel is running and stays set");
+        return;
+    }
+    QTimer *beat = new QTimer();
+    QObject::connect(beat, &QTimer::timeout, [] { __atomic_store_n(&alive_at, now(), __ATOMIC_RELEASE); });
+    beat->start(1000);
 }
 
 void nk_failsafe(int seconds) {
@@ -742,6 +761,7 @@ __attribute__((constructor)) static void load(void) {
     }
     nk_failsafe(FAILSAFE_SECONDS);
     atexit(failsafe_stop);
+    start_heartbeat();
     nk_log("loaded");
     nk_mod_init();
 }

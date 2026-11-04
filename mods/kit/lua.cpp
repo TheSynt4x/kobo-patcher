@@ -59,6 +59,14 @@ static const Embedded *find_embedded(const char *name) {
     return 0;
 }
 
+bool kit_embedded(const char *name, const unsigned char **data, unsigned *size) {
+    const Embedded *file = find_embedded(name);
+    if (!file) return false;
+    *data = file->data;
+    *size = file->size;
+    return true;
+}
+
 static bool dev_mode() { return QFileInfo(QStringLiteral(DEV)).isDir(); }
 
 /* A script's text: from the dev folder when there is one, else built in. */
