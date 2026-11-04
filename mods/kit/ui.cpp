@@ -949,6 +949,16 @@ static void open_tab(void *) {
 
 void kit_reopen_tab() { open_tab(0); }
 
+bool kit_reload_tab() {
+    foreach (QWidget *w, QApplication::allWidgets()) {
+        if (w->objectName() != QLatin1String("nkTabPage") || !w->isVisible()) continue;
+        close_pages(0);
+        open_tab(0);
+        return true;
+    }
+    return false;
+}
+
 typedef void (*ViewCtor)(void *self, QWidget *parent);
 typedef void (*SetActive)(void *self, bool active);
 static ViewCtor real_nav_view;

@@ -57,6 +57,8 @@ void kit_build_page(PagingContainer *paging, int build, bool tab);
 bool kit_ready_to_open();
 /* ui.cpp: opens the tab again, built afresh. */
 void kit_reopen_tab();
+/* ui.cpp: if the tab is showing, back to its first page, built afresh. False if it isn't. */
+bool kit_reload_tab();
 
 /* ui.cpp: a label's text, for Kobo's elided labels too. */
 void kit_set_text(QLabel *label, const QString &text);

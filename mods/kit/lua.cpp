@@ -195,6 +195,72 @@ static bool ready_to_open() {
 
 bool kit_ready_to_open() { return ready_to_open(); }
 
+/* ---- development, for mods/tools/kobo through the devtools mod ---- */
+
+/* Each writes its answer into out, and returns 0 if it failed. They do nothing unless DEV exists,
+ * so a release behaves as built. */
+static int dev_answer(char *out, int size, const QByteArray &text, int ok) {
+    qstrncpy(out, text.constData(), size);
+    return ok;
+}
+
+/* Runs main.lua again from the dev folder, and rebuilds the tab if it's showing. */
+extern "C" __attribute__((visibility("default"))) int nk_dev_reload(const char *, char *out, int size) {
+    if (!dev_mode()) return dev_answer(out, size, "no " DEV ", so the scripts are the built-in ones\n", 0);
+    run_main();
+    if (kit_reload_tab()) return dev_answer(out, size, "ran main.lua again and rebuilt the tab\n", 1);
+    return dev_answer(out, size, "ran main.lua again; reopen the screen to see it\n", 1);
+}
+
+/* A value as text, without its __tostring, which could raise an error here. */
+static QByteArray describe(lua_State *co, int index) {
+    switch (lua_type(co, index)) {
+    case LUA_TNIL: return "nil";
+    case LUA_TBOOLEAN: return lua_toboolean(co, index) ? "true" : "false";
+    case LUA_TNUMBER:
+    case LUA_TSTRING: return lua_tostring(co, index);
+    default: return QByteArray(luaL_typename(co, index)) + ": 0x" + QByteArray::number(quintptr(lua_topointer(co, index)), 16);
+    }
+}
+
+/* Runs code in the mod's state, as an expression if it is one, in a callback's coroutine so it
+ * can wait. The answer is what it returns, or its error. One that waits finishes on its own, and
+ * print() in it goes to the log. */
+extern "C" __attribute__((visibility("default"))) int nk_dev_eval(const char *code, char *out, int size) {
+    if (!dev_mode()) return dev_answer(out, size, "no " DEV ", so eval is off\n", 0);
+    lua_State *co = lua_newthread(L);
+    tasks->insert(co, luaL_ref(L, LUA_REGISTRYINDEX));
+    QByteArray expression = QByteArray("return ") + code;
+    if (luaL_loadbuffer(co, expression.constData(), expression.size(), "=eval") != LUA_OK) {
+        lua_pop(co, 1);
+        if (luaL_loadbuffer(co, code, qstrlen(code), "=eval") != LUA_OK) {
+            QByteArray error = describe(co, -1) + "\n";
+            luaL_unref(L, LUA_REGISTRYINDEX, tasks->take(co));
+            return dev_answer(out, size, error, 0);
+        }
+    }
+    lua_State *outer = running;
+    running = co;
+    int results = 0;
+    int status = lua_resume(co, outer, 0, &results);
+    running = outer;
+    if (status == LUA_YIELD) {
+        lua_pop(co, results);
+        return dev_answer(out, size, "waiting; it finishes on its own, and print() goes to the log\n", 1);
+    }
+    QByteArray answer;
+    if (status == LUA_OK) {
+        for (int i = -results; i < 0; i++) answer += describe(co, i) + (i < -1 ? "\t" : "");
+        lua_pop(co, results);
+    } else {
+        luaL_traceback(L, co, lua_tostring(co, -1), 0);
+        answer = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    }
+    luaL_unref(L, LUA_REGISTRYINDEX, tasks->take(co));
+    return dev_answer(out, size, answer + "\n", status == LUA_OK);
+}
+
 /* ---- screens and their blocks ---- */
 
 /* Every page is a PagingContainer, Kobo's own list that turns pages, whether it's a screen's or a
