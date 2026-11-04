@@ -14,7 +14,7 @@ local update = {}
 -- never replaced by an older one, as one built from a branch would be by the site's. Raise it
 -- with each change to the mod that should reach Kobos: tools/sign_mods.mjs reads it from here.
 -- The C mod before this one was 1, and its manifests had no version.
-update.VERSION = 2
+update.VERSION = 3
 
 -- The public half of the key tools/sign_mods.mjs signs with.
 local UPDATE_KEY = "f65e1ff82241944b3e2a8ddb433be5a710835feaca53db3c5fc4afdd01d567b8"
