@@ -1,8 +1,13 @@
 /* A small kit for adding to Kobo's UI with Kobo's own widgets, so new things look like they
- * belong. It needs no Qt headers or Qt build: everything is looked up by name at runtime, and a
- * mod that can't find what it needs on this firmware stays out of the way. */
+ * belong. The kit is C++ built against Qt 5.2.1's headers, and these C functions are a thin layer
+ * over it. Every symbol it needs is checked when Nickel loads the mod, and a mod that can't find
+ * one on this firmware stays out of the way. */
 #ifndef NK_H
 #define NK_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct NkScreen NkScreen;
 typedef void (*NkFn)(void *arg);
@@ -80,5 +85,9 @@ void nk_reboot(void);
 /* Run a shell command on its own, outside Nickel and from /, the way NickelMenu's cmd_spawn does. The crash
  * guard is stopped first, since the command may well stop Nickel. */
 void nk_spawn(const char *command);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

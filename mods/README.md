@@ -1,7 +1,7 @@
 # Mods
 
 Mods add to Kobo's UI using Kobo's own widgets, so a new row or screen looks like it was always there.
-A mod is a small C file on top of `kit/`. There's no Qt to install: symbols are looked up at runtime.
+A mod is a small C or C++ file on top of `kit/`. The kit is C++, built against Qt 5.2.1's headers, the Qt that Nickel runs, and uses Nickel's own Qt when it runs. There's no Qt to install: the build fetches the headers.
 
 ```c
 #include "../kit/nk.h"
@@ -18,14 +18,14 @@ static void open_screen(void *arg) { nk_open_screen("Hello", "More", build, 0); 
 void nk_mod_init(void) { nk_more_row("Hello", icon, sizeof icon, open_screen, 0); }
 ```
 
-Build it with `mods/build.sh <folder>`, which needs zig, and Python with PyYAML for `patches`. It writes
-`build/lib<folder>.so`, which goes in `/usr/local/Kobo/imageformats/` on the Kobo.
+Build it with `mods/build.sh <folder>`, which needs zig 0.17.0, curl the first time (for Qt's headers, which `kit/qt-headers.sh` fetches into `build/qt` and checks), and Python with PyYAML for `patches`. It writes
+`build/lib<folder>.so`, which goes in `/usr/local/Kobo/imageformats/` on the Kobo. A folder elsewhere builds the same way, with `build.sh path/to/folder`, and its `.so` goes in `build/` beside that folder. A `plugin` file in the folder gives it its own Qt plugin class and key, 15 and 4 characters, so Qt loads it beside other mods.
 
 **Status: works on a real Kobo Nia on firmware 4.38.23852 and a real Kobo Libra Colour on 4.46.23852, one device each. Not yet tried on other models. The crash protection below has been tested on the Nia for a crash while a mod starts, not yet for one while a screen opens. The missing-symbol check has only been tested in an emulator. Switching patches straight away has only been tested in an emulator so far.**
 
 ## What keeps a Kobo safe
 
-- Every symbol is checked before anything changes. If one is missing there's no row and no crash.
+- Every symbol the mod uses is checked when Nickel loads it, before the mod does anything. The build lists them: what the `.so` leaves undefined, and the names the kit looks up. If one is missing, the mod does nothing and there's no crash.
 - Before a screen opens, the controller's vtable is compared with what's expected.
 - If Nickel crashes while a mod starts or opens a screen, or soon after `nk_failsafe`, the mod is moved to `/usr/local/Kobo/<name>.disabled` and isn't loaded again. The Kobo may freeze or restart first. If it's stuck, hold power for about 15 seconds and turn it on again. Nickel exiting normally, `nk_reboot`, or a command from `nk_spawn` stopping Nickel, doesn't count as a crash.
 - `/mnt/onboard/.adds/<name>/uninstall` removes the mod the next time Nickel starts.

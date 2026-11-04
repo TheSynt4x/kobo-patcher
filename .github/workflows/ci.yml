@@ -36,6 +36,11 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
+      # Qt 5.2.1's headers, which the kit is built against.
+      - uses: actions/cache@v4
+        with:
+          path: mods/build/qt
+          key: qt-${{ hashFiles('mods/kit/qt-headers.sh') }}
       - name: Build the mods
         run: |
           make mods
@@ -59,6 +64,11 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
+      # Qt 5.2.1's headers, which the kit is built against.
+      - uses: actions/cache@v4
+        with:
+          path: mods/build/qt
+          key: qt-${{ hashFiles('mods/kit/qt-headers.sh') }}
       # Kobo Patcher only takes updates signed with this key. It's an Ed25519 key in PEM.
       - name: Build and sign the mods
         env:
