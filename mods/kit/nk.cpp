@@ -8,6 +8,7 @@
 #include <QBoxLayout>
 #include <QCheckBox>
 #include <QDialog>
+#include <QFontMetrics>
 #include <QLabel>
 #include <QLayout>
 #include <QPixmap>
@@ -451,6 +452,13 @@ NkLabel *nk_section(NkScreen *s, const char *title) {
 NkLabel *nk_text(NkScreen *s, const char *text) {
     QLabel *line = label(s->paging, screen.vptrs[LABEL_TEXT], text);
     line->setWordWrap(true);
+    /* Half a line above and below, as Kobo leaves around its own notes, in the label's own font
+     * once Kobo's style has set it, so it scales with the screen. Kobo's own margins at the sides
+     * stay, so the text lines up with the rows. */
+    line->ensurePolished();
+    int space = line->fontMetrics().height() / 2;
+    QMargins sides = line->contentsMargins();
+    line->setContentsMargins(sides.left(), space, sides.right(), space);
     add(s, line);
     return reinterpret_cast<NkLabel *>(line);
 }

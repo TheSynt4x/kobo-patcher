@@ -6,9 +6,15 @@
 -- The manifest, from tools/sign_mods.mjs:
 --
 --   kobo-patcher-manifest	1
---   mod	<sha512>	<size>	<model-firmware,...>     the Kobos the mod updates itself on
+--   mod	<sha512>	<size>	<model-firmware,...>	<version>     the Kobos the mod updates itself on
 --   list	<model-firmware>	<sha512>	<size>
 local update = {}
+
+-- This mod's version. A mod is only offered when the manifest's is higher, so a newer build is
+-- never replaced by an older one, as one built from a branch would be by the site's. Raise it
+-- with each change to the mod that should reach Kobos: tools/sign_mods.mjs reads it from here.
+-- The C mod before this one was 1, and its manifests had no version.
+update.VERSION = 2
 
 -- The public half of the key tools/sign_mods.mjs signs with.
 local UPDATE_KEY = "f65e1ff82241944b3e2a8ddb433be5a710835feaca53db3c5fc4afdd01d567b8"
@@ -33,7 +39,7 @@ function update.parse_manifest(text)
   for line in text:gmatch("[^\n]+") do
     local f = fields_of(line)
     if #f >= 4 and f[1] == "mod" and #f[2] == 128 and not manifest.mod then
-      manifest.mod = {hash = f[2], size = tonumber(f[3]), targets = f[4]}
+      manifest.mod = {hash = f[2], size = tonumber(f[3]), targets = f[4], version = tonumber(f[5] or "")}
     elseif #f >= 4 and f[1] == "list" and #f[3] == 128 and not manifest.lists[f[2]] then
       manifest.lists[f[2]] = {hash = f[3], size = tonumber(f[4])}
     end
@@ -44,6 +50,11 @@ end
 -- Whether data is the file the manifest describes.
 function update.matches(data, entry)
   return data ~= nil and entry ~= nil and #data == entry.size and nk.crypto.sha512(data) == entry.hash
+end
+
+-- Whether the manifest's mod is a later version than this one. One without a version isn't.
+function update.newer(mod)
+  return mod ~= nil and mod.version ~= nil and mod.version > update.VERSION
 end
 
 -- Whether the signature, in hex, is UPDATE_KEY's on the manifest.
@@ -113,11 +124,11 @@ local function run(status, name, list_changed)
     result = "New patches are ready. Close Kobo Patcher and open it again to see them."
   end
 
-  -- Then the mod itself: only on the Kobos the manifest names, where it has been tried.
+  -- Then the mod itself: only on the Kobos the manifest names, where it has been tried, and only
+  -- when it's newer than this one.
   local mod, ours = manifest.mod, false
   for target in (mod and mod.targets or ""):gmatch("[^,]+") do ours = ours or target == name end
-  local own = nk.self_sha512()
-  if not ours or not own or own == mod.hash then return result end
+  if not ours or not update.newer(mod) then return result end
   say(result)
   if not nk.confirm("Update Kobo Patcher?",
       "A new version of Kobo Patcher is ready. Your Kobo will restart to install it, and your choices are kept.",

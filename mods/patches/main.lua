@@ -47,11 +47,14 @@ local function choices_changed()
   return (nk.file.read(CHOICES) or "") ~= state.choices_text
 end
 
--- Patches turned off go first, because patches in a group can share bytes.
+-- Patches turned off go first, because patches in a group can share bytes. A patch to be off whose
+-- bytes read as changed is left alone: they belong to something else, often a patch in its group
+-- that's on.
 local function apply_choices()
   for _, on in ipairs({false, true}) do
     for _, patch in ipairs(state.firmware.patches) do
-      if state.choices[patch.id] == on and nk.patch.state(patch.edits) ~= (on and "on" or "off") then
+      local now = nk.patch.state(patch.edits)
+      if state.choices[patch.id] == on and now ~= (on and "on" or "off") and (on or now ~= "changed") then
         local ok = nk.patch.set(patch.edits, on, patch)
         nk.log(patch.id .. ": " .. (not ok and "bytes aren't as expected, not changing it" or on and "on" or "off"))
       end
