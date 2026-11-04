@@ -88,6 +88,11 @@ static QNetworkRequest request_for(const QUrl &url, const Headers &headers, cons
     return request;
 }
 
+/* Kobo's Qt isn't stock 5.2.1: its QIODevice has two more virtual functions, so every virtual of a
+ * reply after them is two slots further on than Qt's headers say, and reply->abort() would run
+ * writeData instead. abort is a slot, so it's called by name, through the reply's meta-object. */
+static void abort_reply(QNetworkReply *reply) { QMetaObject::invokeMethod(reply, "abort", Qt::DirectConnection); }
+
 static int status_of(QNetworkReply *reply) { return reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(); }
 
 static QUrl redirect_of(QNetworkReply *reply) {
@@ -145,12 +150,12 @@ static void send(Request *r) {
     } else reply = network()->get(request);
     QTimer *timer = new QTimer(reply);
     timer->setSingleShot(true);
-    QObject::connect(timer, &QTimer::timeout, reply, &QNetworkReply::abort);
+    QObject::connect(timer, &QTimer::timeout, [reply]() { abort_reply(reply); });
     timer->start(r->timeout);
     QObject::connect(reply, &QNetworkReply::downloadProgress, [r, reply](qint64 received, qint64) {
         if (received > r->limit && !r->too_large) {
             r->too_large = true;
-            reply->abort();
+            abort_reply(reply);
         }
     });
     QObject::connect(reply, &QNetworkReply::finished, [r, reply, timer]() {
@@ -306,7 +311,7 @@ static void fetch_file(Download *d) {
     QObject::disconnect(d->stalled, 0, 0, 0);
     QObject::connect(d->stalled, &QTimer::timeout, [d, reply]() {
         d->why = QStringLiteral("sent nothing for a minute");
-        reply->abort();
+        abort_reply(reply);
     });
     d->stalled->start(60000);
     QObject::connect(reply, &QNetworkReply::readyRead, [d, reply]() {
@@ -318,7 +323,7 @@ static void fetch_file(Download *d) {
         d->stalled->start(60000);
         if (d->bytes > d->limit || d->total > d->limit) {
             d->why = QStringLiteral("is larger than %1 bytes").arg(d->limit);
-            reply->abort();
+            abort_reply(reply);
             return;
         }
         d->hash_md5->addData(data);
@@ -327,7 +332,7 @@ static void fetch_file(Download *d) {
             ssize_t n = write(d->fd, data.constData() + done, data.size() - done);
             if (n <= 0) {
                 d->why = QStringLiteral("couldn't be saved: is the Kobo full?");
-                reply->abort();
+                abort_reply(reply);
                 return;
             }
             done += n;
