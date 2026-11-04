@@ -237,7 +237,12 @@ static int hook_library(struct dl_phdr_info *info, size_t, void *data) {
         void **slot = reinterpret_cast<void **>(info->dlpi_addr + rel[i].r_offset);
         uintptr_t page = reinterpret_cast<uintptr_t>(slot) & ~uintptr_t(0xfff);
         if (mprotect(reinterpret_cast<void *>(page), 0x1000, PROT_READ | PROT_WRITE)) return 1;
-        hook->original = dlsym(RTLD_DEFAULT, hook->symbol);
+        /* Another mod may have hooked it already, so its replacement is called next and both run.
+         * Otherwise the slot holds Nickel's own address, or the stub that looks it up. */
+        void *current = *slot;
+        Dl_info where;
+        bool nickels = dladdr(current, &where) && where.dli_fname && strstr(where.dli_fname, "libnickel.so");
+        hook->original = nickels || !current ? dlsym(RTLD_DEFAULT, hook->symbol) : current;
         *slot = hook->replacement;
         return 1;
     }

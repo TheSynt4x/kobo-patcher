@@ -216,16 +216,74 @@ static int image_set(lua_State *co) {
 
 /* ---- headings ---- */
 
-/* page:heading(text): a large title, as at the top of Kobo's More page. */
+/* Something tapped that runs a script's function, and goes with its widget. */
+class Action : public QObject {
+public:
+    explicit Action(QObject *parent) : QObject(parent), hook(0) {}
+    KitHook *hook;
+};
+
+static void action_tapped(void *arg) {
+    QPointer<Action> *action = static_cast<QPointer<Action> *>(arg);
+    lua_State *co = *action ? kit_hook_task((*action)->hook) : 0;
+    if (co) kit_resume(co, 0);
+}
+
+/* Kobo's icons a block can show, by the name a script gives. */
+static const struct {
+    const char *name, *path;
+} icons[] = {
+    {"settings", ":/images/reading/settings_gear.png"},
+};
+
+typedef void (*TouchCtor)(void *self, QWidget *parent, int flags);
+
+/* Kobo's tappable label, to hold a block's parts. */
+static QLabel *touch_label(QWidget *parent) {
+    static TouchCtor touch_ctor;
+    if (!touch_ctor) touch_ctor = reinterpret_cast<TouchCtor>(nickel("_ZN10TouchLabelC1EP7QWidget6QFlagsIN2Qt10WindowTypeEE"));
+    if (!touch_ctor) return new (alloc(0x40)) QLabel(parent, 0);
+    QLabel *label = static_cast<QLabel *>(alloc(0x100)); /* 0x84 on 4.38 */
+    touch_ctor(label, parent, 0);
+    return label;
+}
+
+/* A square to tap, with the image centred in it, running tapped when tapped. */
+static QLabel *tap_square(QWidget *parent, const QPixmap &image, int size, void (*tapped)(void *), void *arg) {
+    QLabel *square = touch_label(parent);
+    square->setPixmap(image);
+    square->setFixedSize(px(size), px(size));
+    square->setAlignment(Qt::AlignCenter);
+    if (square->inherits("TouchLabel")) nk_connect(square, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", tapped, arg);
+    return square;
+}
+
+/* page:heading(text, icon, tapped): a large title, as at the top of Kobo's More page. With an
+ * icon, such as "settings", it's on the right, and tapped() runs when it's tapped. */
 static int page_heading(lua_State *co) {
     PagingContainer *paging = kit_check_page(co);
     const char *text = luaL_checkstring(co, 2);
+    const char *icon = luaL_optstring(co, 3, 0);
+    if (icon) luaL_checktype(co, 4, LUA_TFUNCTION);
     QWidget *holder = new QWidget(paging);
-    QVBoxLayout *column = new QVBoxLayout(holder);
-    column->setContentsMargins(0, px(GAP), 0, px(2 * SPACE));
+    QHBoxLayout *line = new QHBoxLayout(holder);
+    line->setContentsMargins(0, px(GAP), 0, px(2 * SPACE));
     QLabel *heading = kobo_label(holder, "HeaderMediumLabel", QString::fromUtf8(text));
     heading->setWordWrap(true);
-    column->addWidget(heading, 0, 0);
+    line->addWidget(heading, 1, Qt::AlignVCenter);
+    const char *path = 0;
+    for (unsigned i = 0; icon && i < sizeof icons / sizeof *icons; i++)
+        if (!strcmp(icons[i].name, icon)) path = icons[i].path;
+    if (icon && !path) return luaL_error(co, "no icon called %s", icon);
+    QPixmap image(path ? QString::fromLatin1(path) : QString());
+    if (path && !image.isNull()) {
+        Action *action = new Action(holder);
+        action->hook = kit_hook(co, 4, action);
+        QPointer<Action> *arg = new QPointer<Action>(action);
+        QLabel *square = tap_square(holder, image, 56, action_tapped, arg);
+        QObject::connect(square, &QObject::destroyed, [arg]() { delete arg; });
+        line->addWidget(square, 0, Qt::AlignVCenter);
+    }
     paging->addWidget(holder);
     kit_push_handle(co, heading, "nk.label");
     return 1;
@@ -234,7 +292,7 @@ static int page_heading(lua_State *co) {
 /* ---- books ---- */
 
 /* Two rows of books fit on a page under a search box and a heading. */
-enum { SHELF_COLUMNS = 3, TILE_WIDTH = 190, TILE_COVER = 236, BOOK_COVER_WIDTH = 230, BOOK_COVER = 345 };
+enum { SHELF_COLUMNS = 3, TILE_WIDTH = 190, TILE_COVER = 220, BOOK_COVER_WIDTH = 230, BOOK_COVER = 345 };
 
 /* A shelf's books, kept to change them. It goes with the page. */
 class Books : public QObject {
@@ -307,18 +365,6 @@ static void fill_tile(lua_State *co, int book, Books::Tile &tile) {
     if (field_of(co, book, "status", &text) && tile.status) set_badge(tile.status, text);
     if (field_of(co, book, "cover", &text) && tile.cover)
         show_cover(tile.cover, image_path(text.toUtf8().constData()), px(TILE_WIDTH), px(TILE_COVER), true);
-}
-
-typedef void (*TouchCtor)(void *self, QWidget *parent, int flags);
-
-/* Kobo's tappable label, to hold a block's parts. */
-static QLabel *touch_label(QWidget *parent) {
-    static TouchCtor touch_ctor;
-    if (!touch_ctor) touch_ctor = reinterpret_cast<TouchCtor>(nickel("_ZN10TouchLabelC1EP7QWidget6QFlagsIN2Qt10WindowTypeEE"));
-    if (!touch_ctor) return new (alloc(0x40)) QLabel(parent, 0);
-    QLabel *label = static_cast<QLabel *>(alloc(0x100)); /* 0x84 on 4.38 */
-    touch_ctor(label, parent, 0);
-    return label;
 }
 
 /* A book as Kobo's Home shows one: its cover, its title under it, and its author in grey capitals. */
@@ -704,13 +750,46 @@ typedef int (*IntOf)(const void *self);
 typedef void (*Turn)(void *self);
 typedef void (*PointOf)(QPoint *out, const void *self);
 
-/* A tab's page: a PagingContainer that turns a page for each drag up or down, or across. */
+/* A tab's page: a PagingContainer that turns a page for each drag up or down, or across, with
+ * "Page 2 of 5" under it while there's more than one. Kobo's paging bar is hidden, so the blocks
+ * have the page's whole width. */
 class TabPage : public QWidget {
 public:
     TabPage() : QWidget(0) {}
     QPointer<QWidget> paging;
+    QPointer<QLabel> pages;
+
+    void count_pages() {
+        static IntOf page_of, count_of;
+        if (!page_of) page_of = reinterpret_cast<IntOf>(nickel("_ZNK15PagingContainer7getPageEv"));
+        if (!count_of) count_of = reinterpret_cast<IntOf>(nickel("_ZNK15PagingContainer8numPagesEv"));
+        if (!paging || !pages || !page_of || !count_of) return;
+        /* Kobo sets up its bar as it pages, so it's put away each time. */
+        QWidget *bar = paging->findChild<QWidget *>(QStringLiteral("pagingScrollBar"));
+        if (bar) {
+            bar->setFixedWidth(0);
+            bar->hide();
+        }
+        int page = page_of(paging), count = count_of(paging);
+        if (page < count) page++; /* from 0 */
+        pages->setText(QStringLiteral("Page %1 of %2").arg(page).arg(count));
+        pages->setVisible(count > 1);
+    }
 
 protected:
+    void showEvent(QShowEvent *event) override {
+        QWidget::showEvent(event);
+        /* The pages are counted once they're laid out, which is after they're shown. */
+        QPointer<TabPage> self(this);
+        QTimer *soon = new QTimer();
+        soon->setSingleShot(true);
+        QObject::connect(soon, &QTimer::timeout, [self, soon]() {
+            soon->deleteLater();
+            if (self) self->count_pages();
+        });
+        soon->start(0);
+    }
+
     bool event(QEvent *event) override {
         static int *drag_type;
         static PointOf begin, end;
@@ -731,7 +810,10 @@ protected:
             static Turn next, prev;
             if (!next) next = reinterpret_cast<Turn>(nickel("_ZN15PagingContainer8nextPageEv"));
             if (!prev) prev = reinterpret_cast<Turn>(nickel("_ZN15PagingContainer8prevPageEv"));
-            if (qAbs(along) > px(40) && next && prev) (along > 0 ? next : prev)(paging);
+            if (qAbs(along) > px(40) && next && prev) {
+                (along > 0 ? next : prev)(paging);
+                count_pages();
+            }
         }
         return true;
     }
@@ -815,14 +897,15 @@ static TabPage *make_tab_page() {
     column->setContentsMargins(px(40), over ? px(76) : px(84), px(40), px(8));
     column->setSpacing(0);
     if (over) {
-        QLabel *back = touch_label(page);
+        /* Kobo's back arrow, in a square to tap centred on it, the size of its dialogs' own. The
+         * arrow keeps to the page's left edge, so the square sits over the margin. */
         QPixmap arrow(QStringLiteral(":/images/reading/back_arrow.png"));
+        QLabel *back = tap_square(page, arrow, 78, back_tapped, 0);
         if (arrow.isNull()) back->setText(QStringLiteral("‹"));
-        else back->setPixmap(arrow);
-        back->setFixedSize(px(64), px(64));
-        back->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        if (back->inherits("TouchLabel")) nk_connect(back, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", back_tapped, 0);
-        column->addWidget(back, 0, Qt::AlignLeft);
+        int arrow_width = arrow.isNull() ? px(32) : arrow.width();
+        back->move(px(40) + arrow_width / 2 - back->width() / 2, px(76) + px(32) - back->height() / 2);
+        back->raise();
+        column->addSpacing(px(64));
     }
     WidgetCtor paging_ctor = reinterpret_cast<WidgetCtor>(nickel("_ZN15PagingContainerC1EP7QWidget"));
     if (!paging_ctor) return page;
@@ -830,6 +913,11 @@ static TabPage *make_tab_page() {
     paging_ctor(paging, page);
     page->paging = paging;
     column->addWidget(paging, 1);
+    QLabel *pages = kobo_label(page, "MetaDataLabel", QString());
+    pages->setAlignment(Qt::AlignRight);
+    pages->hide();
+    page->pages = pages;
+    column->addWidget(pages, 0);
     kit_build_page(static_cast<PagingContainer *>(paging), over ? tab_stack->last() : tab.build, true);
     /* Both are Discover to Kobo, so only the one showing is lit. */
     tab.open = true;
