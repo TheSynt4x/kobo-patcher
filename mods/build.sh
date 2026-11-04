@@ -3,8 +3,9 @@
 # anywhere else builds the same way, with mods/build.sh path/to/folder, using this kit where it is.
 # Needs zig 0.17.0, and Python for gen_*.py and plugin names, with PyYAML for the patch list.
 #
-# A mod is a folder of .c and .cpp files, and vendor/*.c. Its gen_*.py run first, from the folder
-# above it, and write into build/. A plugin file names its Qt plugin class and key, 15 and 4
+# A mod is a folder of .c and .cpp files, and vendor/*.c, or of Lua: a main.lua, other *.lua and
+# icons/*.png, which are built into the .so, with Lua and the kit's Lua side. Its gen_*.py run
+# first, from the folder above it, and write into build/. A plugin file names its Qt plugin class and key, 15 and 4
 # characters, so Qt loads it beside the other mods; without one it gets the kit's.
 #
 # The kit and a mod's .cpp files are built against Qt 5.2.1's headers (kit/qt-headers.sh fetches
@@ -44,6 +45,7 @@ cxx() {
     -o "$2" "$1"
 }
 objects=
+libs=
 for source in "$folder"/*.c "$folder"/vendor/*.c; do
   [ -f "$source" ] || continue
   object="$out/$(basename "$source" .c).o"
@@ -56,10 +58,33 @@ for source in "$folder"/*.cpp; do
   cxx "$source" "$object"
   objects="$objects $object"
 done
+if [ -f "$folder/main.lua" ]; then
+  embedded="$out/embedded.inc"
+  : > "$embedded"
+  table=
+  i=0
+  for file in "$folder"/*.lua "$folder"/icons/*.png; do
+    [ -f "$file" ] || continue
+    printf 'static const unsigned char embedded_%d[] = {' "$i" >> "$embedded"
+    od -An -v -tu1 "$file" | tr -s ' \n' ',' | sed 's/^,//' >> "$embedded"
+    printf '0};\n' >> "$embedded"
+    table="$table  {\"${file#"$folder"/}\", embedded_$i, $(wc -c < "$file")},\n"
+    i=$((i + 1))
+  done
+  printf 'static const Embedded embedded[] = {\n%b};\n' "$table" >> "$embedded"
+  for source in "$kit"/vendor/lua/*.c; do
+    object="$out/lua_$(basename "$source" .c).o"
+    zig cc -c $flags -w -o "$object" "$source"
+    objects="$objects $object"
+  done
+  cxx "$kit/lua.cpp" "$out/lua.o"
+  objects="$objects $out/lua.o"
+  libs=-lm
+fi
 link() {
   cxx "$kit/nk.cpp" "$out/nk.o"
   zig cc $flags -w -shared -Wl,--gc-sections -Wl,-z,norelro -Wl,-z,lazy \
-    -Wl,--hash-style=sysv -o "$so" "$out/nk.o" $objects -ldl -lpthread
+    -Wl,--hash-style=sysv -o "$so" "$out/nk.o" $objects -ldl -lpthread $libs
 }
 undefined() { nm -D --undefined-only "$so" | awk '$1 == "U" { sub(/@.*/, "", $2); print $2 }' | sort -u; }
 : > "$out/symbols.inc"

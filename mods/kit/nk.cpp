@@ -30,7 +30,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-#include "nk.h"
+#include "kit.h"
 
 #ifndef NK_NAME
 #define NK_NAME "mod"
@@ -45,11 +45,6 @@
  * Their objects are made with the size Nickel's own code allocates, never sizeof, since these
  * declarations leave fields out. */
 
-class PagingContainer : public QWidget {
-public:
-    void addWidget(QWidget *widget);
-    void insertWidget(int index, QWidget *widget);
-};
 class IconLeftButton : public QWidget {
 public:
     explicit IconLeftButton(QWidget *parent);
@@ -105,6 +100,7 @@ class MainWindowController {
 public:
     static MainWindowController *sharedInstance();
     void push(AbstractController *controller, bool animate);
+    void pop(AbstractController *controller);
 };
 
 /* ---- plumbing ---- */
@@ -196,6 +192,11 @@ static void connect_to(QObject *sender, const char *signal, const char *meta, Nk
     if (!signal_ptr[0] || !static_meta) return;
     connect_impl(sender, signal_ptr, sender, no_slot, new Slot(fn, arg), Qt::AutoConnection, 0,
                  static_cast<const QMetaObject *>(static_meta));
+}
+
+void kit_connect(QObject *sender, void **signal, const QMetaObject *meta, NkFn fn, void *arg) {
+    void *no_slot[2] = {0, 0};
+    connect_impl(sender, signal, sender, no_slot, new Slot(fn, arg), Qt::AutoConnection, 0, meta);
 }
 
 void nk_connect(void *sender, const char *signal, const char *meta, NkFn fn, void *arg) {
@@ -385,16 +386,13 @@ void nk_settings_row(const char *title, NkFn open, void *arg) {
  * with nothing else on it. A copy of the controller's vtables replaces what fills the page. */
 enum { PRIMARY_SLOTS = 16, GET_TITLE = 13, GET_SMALL_TITLE = 14, LOAD_VIEW = 15, ABSTRACT_SLOTS = 9, ABSTRACT_LOAD_VIEW = 8 };
 
-struct NkScreen {
-    PagingContainer *paging;
-};
-
 static struct {
     const char *title, *small_title;
     void (*build)(NkScreen *, void *);
     void *arg;
     void *vptrs[4][2];
     int learned;
+    void *controller; /* the last one pushed, as an AbstractController */
 } screen;
 
 static void learn_label(QObject *parent, const char *name, int which) {
@@ -437,14 +435,16 @@ static QLabel *label(QWidget *parent, void *vptrs[2], const char *text) {
     return object;
 }
 
+static void add(NkScreen *s, QWidget *block) { s->paging->addWidget(block); }
+
 void nk_section(NkScreen *s, const char *title) {
-    s->paging->addWidget(label(s->paging, screen.vptrs[LABEL_SECTION], title));
+    add(s, label(s->paging, screen.vptrs[LABEL_SECTION], title));
 }
 
 void nk_text(NkScreen *s, const char *text) {
     QLabel *line = label(s->paging, screen.vptrs[LABEL_TEXT], text);
     line->setWordWrap(true);
-    s->paging->addWidget(line);
+    add(s, line);
 }
 
 /* A settings row: Kobo's container, with the title on the left filling the row. */
@@ -470,7 +470,7 @@ void nk_value_row(NkScreen *s, const char *title, const char *value) {
     /* Lines the value up with the "On" and "Start" of Kobo's own settings rows. */
     right->setStyleSheet(QStringLiteral("padding-right: 17px;"));
     r.box->addWidget(right, 0, 0);
-    s->paging->addWidget(r.row);
+    add(s, r.row);
 }
 
 NkToggle *nk_toggle_row(NkScreen *s, const char *title, int on, NkFn changed, void *arg) {
@@ -480,7 +480,7 @@ NkToggle *nk_toggle_row(NkScreen *s, const char *title, int on, NkFn changed, vo
     check->setChecked(on);
     connect_to(check, "_ZN9QCheckBox12stateChangedEi", "_ZN9QCheckBox16staticMetaObjectE", changed, arg);
     r.box->addWidget(check, 0, 0);
-    s->paging->addWidget(r.row);
+    add(s, r.row);
     return reinterpret_cast<NkToggle *>(check);
 }
 
@@ -494,7 +494,7 @@ NkLabel *nk_button_row(NkScreen *s, const char *title, const char *button, NkFn 
     action->setText(qstr(button));
     connect_to(action, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", tapped, arg);
     r.box->addWidget(action, 0, 0);
-    s->paging->addWidget(r.row);
+    add(s, r.row);
     return reinterpret_cast<NkLabel *>(r.name);
 }
 
@@ -615,6 +615,15 @@ void nk_open_screen(const char *title, const char *small_title, void (*build)(Nk
     guard_screen();
     window->push(reinterpret_cast<AbstractController *>(controller + 2), false);
     unguard_screen();
+    screen.controller = controller + 2;
+}
+
+/* The screen opened last is closed and opened again, built afresh. */
+void kit_reopen_screen(void) {
+    if (!screen.controller) return;
+    MainWindowController::sharedInstance()->pop(reinterpret_cast<AbstractController *>(screen.controller));
+    screen.controller = 0;
+    nk_open_screen(screen.title, screen.small_title, screen.build, screen.arg);
 }
 
 /* ---- loading, as an image-format plugin ---- */
