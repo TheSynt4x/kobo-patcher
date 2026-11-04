@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialog>
+#include <QHash>
 #include <QFontMetrics>
 #include <QLabel>
 #include <QLayout>
@@ -108,13 +109,18 @@ public:
 
 /* ---- plumbing ---- */
 
+/* Written whole, in one write, so a line from another thread, such as the crash guard's, isn't cut in
+ * two by Nickel's own output. */
 void nk_log(const char *fmt, ...) {
+    char line[1024];
+    int prefix = snprintf(line, sizeof line, "[" NK_NAME "] ");
     va_list args;
     va_start(args, fmt);
-    fprintf(stderr, "[" NK_NAME "] ");
-    vfprintf(stderr, fmt, args);
-    fputc('\n', stderr);
+    int length = prefix + vsnprintf(line + prefix, sizeof line - prefix - 1, fmt, args);
     va_end(args);
+    if (length > (int)sizeof line - 2) length = sizeof line - 2;
+    line[length] = '\n';
+    if (write(2, line, length + 1) < 0) return;
 }
 
 static int all_found = 1;
@@ -266,43 +272,142 @@ static void guard_screen(void);
 static void unguard_screen(void);
 static void failsafe_stop(void);
 
-/* ---- the More row ---- */
+/* ---- when Kobo builds a screen ---- */
 
-static struct {
-    const char *title;
+/* Functions run after the constructor of one of Kobo's widget classes, for the classes made with
+ * a parent widget, Class::Class(QWidget*). Each constructor hooked needs a function of its own that
+ * knows the original, so there's a pool of them. Another mod's kit hooking the same constructor
+ * chains with this one. Allocated when first used, since a mod starts before this file's own
+ * statics are made. */
+struct Built {
+    QByteArray symbol;
+    void *(*real)(void *, void *);
+    QList<QPair<NkBuiltFn, void *> > fns;
+};
+enum { BUILT_SLOTS = 16 };
+static Built *built;
+static int built_count;
+
+template <int N> static void *built_hook(void *self, void *parent) {
+    void *result = built[N].real(self, parent);
+    QList<QPair<NkBuiltFn, void *> > fns = built[N].fns; /* a copy, in case one adds another */
+    for (int i = 0; i < fns.size(); i++) fns[i].first(self, fns[i].second);
+    return result;
+}
+static void *const built_hooks[BUILT_SLOTS] = {
+    (void *)built_hook<0>,  (void *)built_hook<1>,  (void *)built_hook<2>,  (void *)built_hook<3>,
+    (void *)built_hook<4>,  (void *)built_hook<5>,  (void *)built_hook<6>,  (void *)built_hook<7>,
+    (void *)built_hook<8>,  (void *)built_hook<9>,  (void *)built_hook<10>, (void *)built_hook<11>,
+    (void *)built_hook<12>, (void *)built_hook<13>, (void *)built_hook<14>, (void *)built_hook<15>,
+};
+
+int nk_on_screen(const char *cls, NkBuiltFn fn, void *arg) {
+    /* Split, so build.sh doesn't take the prefix for a symbol the mod needs: a class this firmware
+     * lacks only loses what watches it. */
+    QByteArray symbol = QByteArray("_" "ZN") + QByteArray::number(int(strlen(cls))) + cls + "C1EP7QWidget";
+    if (!built) built = new Built[BUILT_SLOTS];
+    for (int i = 0; i < built_count; i++) {
+        if (built[i].symbol != symbol) continue;
+        built[i].fns << qMakePair(fn, arg);
+        return 1;
+    }
+    /* Looked up first, so a class this firmware doesn't have only costs what needs it. */
+    if (!dlsym(RTLD_DEFAULT, symbol.constData())) {
+        nk_log("this firmware has no %s made with a parent widget", cls);
+        return 0;
+    }
+    if (built_count == BUILT_SLOTS) {
+        nk_log("too many kinds of screen to watch, not %s", cls);
+        return 0;
+    }
+    Built &b = built[built_count];
+    b.real = reinterpret_cast<void *(*)(void *, void *)>(nk_hook(symbol.constData(), built_hooks[built_count]));
+    if (!b.real) return 0;
+    b.symbol = symbol;
+    b.fns << qMakePair(fn, arg);
+    built_count++;
+    return 1;
+}
+
+/* ---- rows in Kobo's More and Settings ---- */
+
+/* A row a mod adds beside one of Kobo's own, by its object name, or in the default place. Rows go
+ * in when the screen is built, so changed rows show the next time it opens. */
+struct AddedRow {
+    QByteArray title, beside;
+    bool after;
     const unsigned char *icon;
     unsigned icon_size;
     NkFn open;
     void *arg;
-} more_row;
-static void *(*real_more_view)(void *, void *);
+};
+static QList<AddedRow> *more_rows, *settings_rows;
+
+void kit_forget_rows(void) {
+    if (more_rows) more_rows->clear();
+    if (settings_rows) settings_rows->clear();
+}
 
 static void *italic_label_vptr[2];
 
-static void *hooked_more_view(void *view, void *parent) {
-    void *result = real_more_view(view, parent);
+static int more_index(void *layout, const char *name) {
+    QBoxLayout *box = static_cast<QBoxLayout *>(layout);
+    for (int i = 0; i < box->count(); i++) {
+        QWidget *w = box->itemAt(i)->widget();
+        if (w && w->objectName() == QLatin1String(name)) return i;
+    }
+    return -1;
+}
+
+/* More: Kobo's rows are IconLeftButtons in a GenericContainerWidget's layout. */
+static void more_built(void *view, void *) {
+    if (!more_rows || more_rows->isEmpty()) return;
     QObject *container = find_class(static_cast<QObject *>(view), "GenericContainerWidget");
-    QObject *settings = container ? find_named(container, "settingsButton") : 0;
-    if (!container || !settings) {
+    QBoxLayout *layout = container ? static_cast<QBoxLayout *>(static_cast<QWidget *>(container)->layout()) : 0;
+    if (!layout || more_index(layout, "settingsButton") < 0) {
         nk_log("More page isn't what's expected, leaving it alone");
-        return result;
+        return;
     }
     QWidget *box = static_cast<QWidget *>(container);
-    QBoxLayout *layout = static_cast<QBoxLayout *>(box->layout());
-    IconLeftButton *row = new (alloc(0x58)) IconLeftButton(box);
-    row->setObjectName(QStringLiteral("nkMoreRow"));
-    set_pixmap_property(row, "pixmap", more_row.icon, more_row.icon_size);
-    row->setProperty("text", qstr(more_row.title));
-    int at = layout->QLayout::indexOf(static_cast<QWidget *>(settings));
-    layout->insertWidget(at, row, 0, 0);
-    connect_to(row, "_ZN14IconButtonBase6tappedEv", "_ZN14IconButtonBase16staticMetaObjectE", more_row.open, more_row.arg);
+    QList<AddedRow> rows = *more_rows;
+    for (int i = 0; i < rows.size(); i++) {
+        QByteArray beside = rows[i].beside.isEmpty() ? QByteArray("settingsButton") : rows[i].beside;
+        int at = more_index(layout, beside.constData());
+        if (at < 0) {
+            nk_log("no %s on More for the row %s, so it goes above Settings", beside.constData(), rows[i].title.constData());
+            at = more_index(layout, "settingsButton");
+        } else if (rows[i].after) {
+            /* After any of ours already there, so rows keep their order. */
+            for (at++; at < layout->count(); at++) {
+                QWidget *next = layout->itemAt(at)->widget();
+                if (!next || next->objectName() != QLatin1String("nkMoreRow")) break;
+            }
+        }
+        IconLeftButton *row = new (alloc(0x58)) IconLeftButton(box);
+        row->setObjectName(QStringLiteral("nkMoreRow"));
+        set_pixmap_property(row, "pixmap", rows[i].icon, rows[i].icon_size);
+        row->setProperty("text", QString::fromUtf8(rows[i].title));
+        layout->insertWidget(at, row, 0, 0);
+        connect_to(row, "_ZN14IconButtonBase6tappedEv", "_ZN14IconButtonBase16staticMetaObjectE", rows[i].open, rows[i].arg);
+        /* The italic label, for values, is learned from the row. */
+        QObject *inner = find_class(row, "GenericContainerWidget");
+        QObject *italic = inner ? find_class(inner, "RegularItalicLabel") : 0;
+        if (italic && !italic_label_vptr[0]) take_vptrs(italic_label_vptr, italic);
+    }
+    nk_log("%d More rows added", rows.size());
+}
 
-    /* The italic label, for values, is learned from the row. */
-    QObject *inner = find_class(row, "GenericContainerWidget");
-    QObject *italic = inner ? find_class(inner, "RegularItalicLabel") : 0;
-    if (italic) take_vptrs(italic_label_vptr, italic);
-    nk_log("row added");
-    return result;
+void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, NkFn open, void *arg) {
+    if (!more_rows) {
+        more_rows = new QList<AddedRow>;
+        nk_on_screen("MoreView", more_built, 0);
+    }
+    AddedRow row = {title, beside ? beside : "", after, icon_png, icon_size, open, arg};
+    *more_rows << row;
+}
+
+void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg) {
+    kit_more_row(title, icon_png, icon_size, 0, false, open, arg);
 }
 
 /* Every symbol the mod uses, listed by build.sh: what it leaves undefined, and the names this file
@@ -316,24 +421,6 @@ static int all_symbols_present(void) {
         if (!nk_sym(symbols[i])) found = 0;
     return found;
 }
-
-void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg) {
-    more_row.title = title;
-    more_row.icon = icon_png;
-    more_row.icon_size = icon_size;
-    more_row.open = open;
-    more_row.arg = arg;
-    real_more_view = reinterpret_cast<void *(*)(void *, void *)>(nk_hook("_ZN8MoreViewC1EP7QWidget", reinterpret_cast<void *>(hooked_more_view)));
-}
-
-/* ---- the Settings row ---- */
-
-static struct {
-    const char *title;
-    NkFn open;
-    void *arg;
-} settings_row;
-static void *(*real_settings_view)(void *, void *);
 
 static QObject *find_named_deep(QObject *parent, const char *name) {
     const QObjectList &kids = parent->children();
@@ -357,36 +444,66 @@ static int paging_index(void *paging, void *widget) {
     return -1;
 }
 
+/* The widget at an index of a PagingContainer's list, or 0, checked as paging_index checks it. */
+static QWidget *paging_at(void *paging, int index) {
+    int *list = *reinterpret_cast<int **>(static_cast<char *>(paging) + 0x2c);
+    if (!list || list[0] < 1 || list[2] < 0 || list[3] < list[2] || list[3] > list[1] || list[3] - list[2] > 64) return 0;
+    if (index < 0 || index >= list[3] - list[2]) return 0;
+    void **pointer = reinterpret_cast<void ***>(list + 4)[list[2] + index];
+    return pointer ? static_cast<QWidget *>(pointer[1]) : 0;
+}
+
 /* Kobo's Settings rows are a TouchLabel subclass with no constructor of its own: Ui_N3SettingsView
- * makes a TouchLabel and sets these vtable pointers. They're copied from Device information. The
- * new row goes first, where it's easy to find, and Device information's place checks the list. */
+ * makes a TouchLabel and sets these vtable pointers. They're copied from Device information, which
+ * every firmware tried has, and its place checks the list. Rows go at the top unless they say. */
 static const int settings_row_vptrs[] = {0, 2, 8, 0x13, 0x16};
 
-static void *hooked_settings_view(void *view, void *parent) {
-    void *result = real_settings_view(view, parent);
+static void settings_built(void *view, void *) {
+    if (!settings_rows || settings_rows->isEmpty()) return;
     PagingContainer *paging = static_cast<N3SettingsView *>(view)->pagingContainer();
     QObject *model = paging ? find_named_deep(paging, "deviceInformation") : 0;
     if (!model || !model->inherits("TouchLabel") || paging_index(paging, model) < 0) {
         nk_log("Settings isn't what's expected, leaving it alone");
-        return result;
+        return;
     }
-    TouchLabel *row = new (alloc(0x84)) TouchLabel(paging, 0);
-    for (size_t i = 0; i < sizeof settings_row_vptrs / sizeof *settings_row_vptrs; i++)
-        reinterpret_cast<void **>(row)[settings_row_vptrs[i]] = reinterpret_cast<void **>(model)[settings_row_vptrs[i]];
-    row->setObjectName(QStringLiteral("nkSettingsRow"));
-    row->setText(qstr(settings_row.title));
-    paging->insertWidget(0, row);
-    connect_to(row, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", settings_row.open, settings_row.arg);
-    nk_log("settings row added");
-    return result;
+    QList<AddedRow> rows = *settings_rows;
+    int top = 0;
+    for (int i = 0; i < rows.size(); i++) {
+        int at = top;
+        if (!rows[i].beside.isEmpty()) {
+            QObject *kobo = find_named_deep(paging, rows[i].beside.constData());
+            int found = kobo ? paging_index(paging, kobo) : -1;
+            if (found < 0) {
+                nk_log("no %s in Settings for the row %s, so it goes at the top", rows[i].beside.constData(), rows[i].title.constData());
+            } else if (rows[i].after) {
+                /* After any of ours already there, so rows keep their order. */
+                for (at = found + 1; paging_at(paging, at) && paging_at(paging, at)->objectName() == QLatin1String("nkSettingsRow"); at++) {}
+            } else {
+                at = found;
+            }
+        }
+        TouchLabel *row = new (alloc(0x84)) TouchLabel(paging, 0);
+        for (size_t v = 0; v < sizeof settings_row_vptrs / sizeof *settings_row_vptrs; v++)
+            reinterpret_cast<void **>(row)[settings_row_vptrs[v]] = reinterpret_cast<void **>(model)[settings_row_vptrs[v]];
+        row->setObjectName(QStringLiteral("nkSettingsRow"));
+        row->setText(QString::fromUtf8(rows[i].title));
+        paging->insertWidget(at, row);
+        if (rows[i].beside.isEmpty()) top++;
+        connect_to(row, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", rows[i].open, rows[i].arg);
+    }
+    nk_log("%d Settings rows added", rows.size());
 }
 
-void nk_settings_row(const char *title, NkFn open, void *arg) {
-    settings_row.title = title;
-    settings_row.open = open;
-    settings_row.arg = arg;
-    real_settings_view = reinterpret_cast<void *(*)(void *, void *)>(nk_hook("_ZN14N3SettingsViewC1EP7QWidget", reinterpret_cast<void *>(hooked_settings_view)));
+void kit_settings_row(const char *title, const char *beside, bool after, NkFn open, void *arg) {
+    if (!settings_rows) {
+        settings_rows = new QList<AddedRow>;
+        nk_on_screen("N3SettingsView", settings_built, 0);
+    }
+    AddedRow row = {title, beside ? beside : "", after, 0, 0, open, arg};
+    *settings_rows << row;
 }
+
+void nk_settings_row(const char *title, NkFn open, void *arg) { kit_settings_row(title, 0, false, open, arg); }
 
 /* ---- screens ---- */
 
@@ -394,14 +511,33 @@ void nk_settings_row(const char *title, NkFn open, void *arg) {
  * with nothing else on it. A copy of the controller's vtables replaces what fills the page. */
 enum { PRIMARY_SLOTS = 16, GET_TITLE = 13, GET_SMALL_TITLE = 14, LOAD_VIEW = 15, ABSTRACT_SLOTS = 9, ABSTRACT_LOAD_VIEW = 8 };
 
+/* What's learned from Kobo's own labels, for every screen. */
 static struct {
-    const char *title, *small_title;
-    void (*build)(NkScreen *, void *);
-    void *arg;
     void *vptrs[4][2];
     int learned;
-    void *controller; /* the last one pushed, as an AbstractController */
 } screen;
+
+/* Each open screen's own title and build, by its controller, so screens over screens keep theirs.
+ * Kept until the screen's view goes, unless it's reopened as another, which keeps the arg. */
+struct ScreenInfo {
+    QByteArray title, small_title;
+    void (*build)(NkScreen *, void *);
+    void *arg;
+    NkFn done; /* when the screen has gone for good, for the arg; or 0 */
+    bool handed;
+};
+static QHash<void *, ScreenInfo *> *screens; /* by controller */
+static QList<void *> *screen_stack;          /* controllers in the order they were pushed */
+
+static ScreenInfo *info_of(void *controller) { return screens ? screens->value(controller) : 0; }
+
+static void screen_gone(void *controller) {
+    ScreenInfo *info = screens ? screens->take(controller) : 0;
+    if (screen_stack) screen_stack->removeAll(controller);
+    if (!info) return;
+    if (!info->handed && info->done) info->done(info->arg);
+    delete info;
+}
 
 static void learn_label(QObject *parent, const char *name, int which) {
     const QObjectList &kids = parent->children();
@@ -578,8 +714,14 @@ void nk_spawn(const char *command) {
 
 /* These replace virtual functions that return a QString, so the address to build it in comes
  * first, before `this`. */
-static void get_title(QString *out, void *) { new (out) QString(qstr(screen.title)); }
-static void get_small_title(QString *out, void *) { new (out) QString(qstr(screen.small_title)); }
+static void get_title(QString *out, void *self) {
+    ScreenInfo *info = info_of(self);
+    new (out) QString(info ? QString::fromUtf8(info->title) : QString());
+}
+static void get_small_title(QString *out, void *self) {
+    ScreenInfo *info = info_of(self);
+    new (out) QString(info ? QString::fromUtf8(info->small_title) : QString());
+}
 
 /* Mirrors what every settings controller's loadView does: make the view and keep a QPointer to it. */
 static void load_view(void *self) {
@@ -587,9 +729,12 @@ static void load_view(void *self) {
     N3SettingsLoggingCategoryView *view = new (alloc(0x20)) N3SettingsLoggingCategoryView(0);
     controller[3] = QtSharedPointer::ExternalRefCountData::getAndRef(view);
     controller[4] = view;
+    QObject::connect(view, &QObject::destroyed, [self]() { screen_gone(self); });
+    ScreenInfo *info = info_of(self);
+    if (!info) return;
     NkScreen built = {view->pagingContainer()};
     learn_labels();
-    screen.build(&built, screen.arg);
+    info->build(&built, info->arg);
 }
 
 /* The abstract-controller vtable's entry is a thunk: `this` points 8 bytes into the object. */
@@ -602,22 +747,33 @@ static void **copy_vtable(void **vtable, int count) {
     return copy + 2;
 }
 
-void nk_open_screen(const char *title, const char *small_title, void (*build)(NkScreen *, void *), void *arg) {
+void kit_open_screen(const char *title, const char *small_title, void (*build)(NkScreen *, void *), void *arg, NkFn done) {
     void *load_real = nk_sym("_ZN35N3SettingsLoggingCategoryController8loadViewEv");
     void *title_real = nk_sym("_ZN35N3SettingsLoggingCategoryController8getTitleEv");
     void *controller_ctor = nk_sym("_ZN35N3SettingsLoggingCategoryControllerC1EP7QObject");
-    if (!load_real || !title_real || !controller_ctor) return;
-    screen.title = title;
-    screen.small_title = small_title;
-    screen.build = build;
-    screen.arg = arg;
+    if (!load_real || !title_real || !controller_ctor) {
+        if (done) done(arg);
+        return;
+    }
     void **controller = static_cast<void **>(alloc(0x1c));
     reinterpret_cast<void (*)(void *, void *)>(controller_ctor)(controller, 0);
     void **primary = static_cast<void **>(controller[0]), **abstract = static_cast<void **>(controller[2]);
     if (primary[LOAD_VIEW] != load_real || primary[GET_TITLE] != title_real) {
         nk_log("controller layout has changed on this firmware, not opening");
+        if (done) done(arg);
         return;
     }
+    ScreenInfo *info = new ScreenInfo;
+    info->title = title;
+    info->small_title = small_title;
+    info->build = build;
+    info->arg = arg;
+    info->done = done;
+    info->handed = false;
+    if (!screens) screens = new QHash<void *, ScreenInfo *>;
+    if (!screen_stack) screen_stack = new QList<void *>;
+    screens->insert(controller, info);
+    *screen_stack << controller;
     static void **new_primary, **new_abstract;
     if (!new_primary) {
         new_primary = copy_vtable(primary, PRIMARY_SLOTS);
@@ -634,15 +790,27 @@ void nk_open_screen(const char *title, const char *small_title, void (*build)(Nk
     guard_screen();
     window->push(reinterpret_cast<AbstractController *>(controller + 2), false);
     unguard_screen();
-    screen.controller = controller + 2;
 }
 
-/* The screen opened last is closed and opened again, built afresh. */
+void nk_open_screen(const char *title, const char *small_title, void (*build)(NkScreen *, void *), void *arg) {
+    kit_open_screen(title, small_title, build, arg, 0);
+}
+
+const char *kit_top_screen_title(void) {
+    ScreenInfo *info = screen_stack && !screen_stack->isEmpty() ? info_of(screen_stack->last()) : 0;
+    return info ? info->title.constData() : 0;
+}
+
+/* The screen opened last is closed and opened again, built afresh, with the same arg. */
 void kit_reopen_screen(void) {
-    if (!screen.controller) return;
-    MainWindowController::sharedInstance()->pop(reinterpret_cast<AbstractController *>(screen.controller));
-    screen.controller = 0;
-    nk_open_screen(screen.title, screen.small_title, screen.build, screen.arg);
+    void *controller = screen_stack && !screen_stack->isEmpty() ? screen_stack->last() : 0;
+    ScreenInfo *info = controller ? info_of(controller) : 0;
+    if (!info) return;
+    ScreenInfo again = *info;
+    info->handed = true;
+    screen_stack->removeAll(controller);
+    MainWindowController::sharedInstance()->pop(reinterpret_cast<AbstractController *>(static_cast<void **>(controller) + 2));
+    kit_open_screen(again.title.constData(), again.small_title.constData(), again.build, again.arg, again.done);
 }
 
 /* ---- loading, as an image-format plugin ---- */

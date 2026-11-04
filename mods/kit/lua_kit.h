@@ -57,6 +57,8 @@ void kit_build_page(PagingContainer *paging, int build, bool tab);
 bool kit_ready_to_open();
 /* One of the mod's own files, built into the .so: a script, or icons/<name>.png. */
 bool kit_embedded(const char *name, const unsigned char **data, unsigned *size);
+/* Opens a settings-style screen built by the function at build_index, kept until it has gone. */
+void kit_lua_open_screen(lua_State *co, const char *title, const char *small_title, int build_index);
 /* ui.cpp: opens the tab that's showing again, built afresh. */
 void kit_reopen_tab();
 /* ui.cpp: if one of the mod's tabs is showing, back to its first page, built afresh. False if none is. */

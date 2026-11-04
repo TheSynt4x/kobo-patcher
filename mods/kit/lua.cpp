@@ -20,6 +20,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QLabel>
+#include <QVariant>
 #include <QList>
 #include <QPointer>
 #include <QTimer>
@@ -173,8 +174,11 @@ static int l_require(lua_State *co) {
     return 1;
 }
 
-/* (Re)runs main.lua with fresh modules. */
+static void forget_places();
+
+/* (Re)runs main.lua with fresh modules, and the rows and screen watchers it adds. */
 static void run_main() {
+    forget_places();
     lua_newtable(L);
     lua_setfield(L, LUA_REGISTRYINDEX, "nk.loaded");
     lua_newtable(L);
@@ -491,65 +495,215 @@ static int page_gc(lua_State *co) {
     return 0;
 }
 
-/* nk.screen(title, small_title, build): opens a settings-style screen built by build(page). A screen
- * loads after it's pushed, so the last few build functions are kept. */
-static int screen_builds[8], next_screen;
-static int l_screen(lua_State *co) {
-    const char *title = luaL_checkstring(co, 1), *small_title = luaL_checkstring(co, 2);
-    int *build = &screen_builds[next_screen++ % 8];
-    if (*build) luaL_unref(co, LUA_REGISTRYINDEX, *build);
-    *build = ref_function(co, 3);
-    nk_open_screen(title, small_title, build_screen, build);
-    return 0;
+/* A screen's build function, kept until the screen has gone for good. */
+static void free_screen_build(void *arg) {
+    int *build = static_cast<int *>(arg);
+    luaL_unref(L, LUA_REGISTRYINDEX, *build);
+    delete build;
+}
+
+void kit_lua_open_screen(lua_State *co, const char *title, const char *small_title, int build_index) {
+    luaL_checktype(co, build_index, LUA_TFUNCTION);
+    lua_pushvalue(co, build_index);
+    int *build = new int(luaL_ref(co, LUA_REGISTRYINDEX));
+    kit_open_screen(title, small_title, build_screen, build, free_screen_build);
 }
 
 /* ---- places ---- */
 
-static struct {
-    char *title;
-    int build;
-} settings_place;
+/* A row's or screen watcher's function, with what it needs, kept for as long as Kobo may call it:
+ * a screen already showing a row can have it tapped after main.lua has run again. Running main.lua
+ * again marks every place gone, and it adds them again. */
+struct Place {
+    char kind; /* 's' Settings row, 'm' More row, 'w' screen watcher */
+    QByteArray name;
+    int fn;
+    bool gone;
+};
+static QList<Place *> *places;
 
-static void open_settings(void *) {
-    if (!ready_to_open()) return;
-    nk_open_screen(settings_place.title, "Settings", build_screen, &settings_place.build);
+static Place *new_place(lua_State *co, char kind, const QByteArray &name, int fn) {
+    Place *place = new Place;
+    place->kind = kind;
+    place->name = name;
+    place->fn = fn;
+    place->gone = false;
+    if (!places) places = new QList<Place *>;
+    *places << place;
+    (void)co;
+    return place;
 }
 
-/* nk.settings(title, build): a row at the top of Kobo's Settings, opening a screen built by build. */
+/* Before main.lua runs again. The places themselves are kept, as rows may still point at them. */
+static void forget_places() {
+    if (!places) return;
+    foreach (Place *place, *places) {
+        luaL_unref(L, LUA_REGISTRYINDEX, place->fn);
+        place->gone = true;
+    }
+    places->clear();
+    kit_forget_rows();
+}
+
+/* The place a row stands for now: itself, or after main.lua has run again, the one it added in its
+ * place with the same name, or 0 if it didn't. */
+static Place *current(Place *place) {
+    if (!place->gone) return place;
+    if (places)
+        foreach (Place *now, *places)
+            if (now->kind == place->kind && now->name == place->name) return now;
+    return 0;
+}
+
+/* The table argument's string field, or 0. */
+static const char *opt_field(lua_State *co, const char *name) {
+    lua_getfield(co, 1, name);
+    const char *value = lua_isnil(co, -1) ? 0 : luaL_checkstring(co, -1);
+    lua_pop(co, 1); /* the string stays alive in the table */
+    return value;
+}
+
+/* A function field of the table argument, referenced. */
+static int fn_field(lua_State *co, const char *name, const char *call) {
+    lua_getfield(co, 1, name);
+    if (!lua_isfunction(co, -1)) luaL_error(co, "%s needs a function for %s", call, name);
+    return luaL_ref(co, LUA_REGISTRYINDEX);
+}
+
+/* after or before, as the object name of one of Kobo's own rows. */
+static const char *beside(lua_State *co, const char *call, bool *after) {
+    const char *a = opt_field(co, "after"), *b = opt_field(co, "before");
+    if (a && b) luaL_error(co, "%s takes after or before, not both", call);
+    *after = a != 0;
+    return a ? a : b;
+}
+
+static void open_settings(void *arg) {
+    if (!ready_to_open()) return;
+    Place *place = current(static_cast<Place *>(arg));
+    if (place) nk_open_screen(place->name.constData(), "Settings", build_screen, &place->fn);
+}
+
+/* nk.settings{name = , build = , after = or before = }: a row in Kobo's Settings, opening a screen
+ * built by build(page). after or before name one of Kobo's rows, such as "deviceInformation";
+ * without either it goes at the top. A mod can add several. */
 static int l_settings(lua_State *co) {
-    const char *title = luaL_checkstring(co, 1);
-    int build = ref_function(co, 2);
-    if (settings_place.build) luaL_unref(co, LUA_REGISTRYINDEX, settings_place.build);
-    settings_place.build = build;
-    if (!settings_place.title) {
-        settings_place.title = strdup(title);
-        nk_settings_row(settings_place.title, open_settings, 0);
+    luaL_checktype(co, 1, LUA_TTABLE);
+    const char *name = opt_field(co, "name");
+    if (!name) return luaL_error(co, "nk.settings needs a name");
+    bool after;
+    const char *next_to = beside(co, "nk.settings", &after);
+    Place *place = new_place(co, 's', name, fn_field(co, "build", "nk.settings"));
+    kit_settings_row(name, next_to, after, open_settings, place);
+    return 0;
+}
+
+static void open_more(void *arg) {
+    if (!ready_to_open()) return;
+    Place *place = current(static_cast<Place *>(arg));
+    if (place) resume(task(place->fn), 0);
+}
+
+/* nk.more{name = , icon = , open = , after = or before = }: a row on Kobo's More page, with
+ * icons/<icon>.png, running open(). after or before name one of Kobo's rows, such as
+ * "betaFeaturesButton"; without either it goes above Settings. A mod can add several. */
+static int l_more(lua_State *co) {
+    luaL_checktype(co, 1, LUA_TTABLE);
+    const char *name = opt_field(co, "name"), *icon = opt_field(co, "icon");
+    if (!name) return luaL_error(co, "nk.more needs a name");
+    if (!icon) return luaL_error(co, "nk.more needs an icon");
+    const Embedded *png = find_embedded((QByteArray("icons/") + icon + ".png").constData());
+    if (!png) return luaL_error(co, "no icons/%s.png", icon);
+    bool after;
+    const char *next_to = beside(co, "nk.more", &after);
+    Place *place = new_place(co, 'm', name, fn_field(co, "open", "nk.more"));
+    kit_more_row(name, png->data, png->size, next_to, after, open_more, place);
+    return 0;
+}
+
+static void screen_built(void *view, void *arg) {
+    Place *place = static_cast<Place *>(arg);
+    if (place->gone) return;
+    lua_State *co = task(place->fn);
+    push_handle(co, static_cast<QObject *>(view), "nk.widget");
+    resume(co, 1);
+}
+
+/* nk.on_screen(class, fn): runs fn(view) each time Nickel makes a widget of one of Kobo's classes,
+ * such as "MoreView", once its constructor is done. Only for classes made with a parent widget.
+ * view is an nk.widget. Returns false if this firmware has no such class. Call it from main.lua. */
+static int l_on_screen(lua_State *co) {
+    const char *cls = luaL_checkstring(co, 1);
+    luaL_checktype(co, 2, LUA_TFUNCTION);
+    lua_pushvalue(co, 2);
+    Place *place = new_place(co, 'w', cls, luaL_ref(co, LUA_REGISTRYINDEX));
+    lua_pushboolean(co, nk_on_screen(cls, screen_built, place));
+    return 1;
+}
+
+/* nk.screen{title = , small_title = , build = }: opens a settings-style screen built by
+ * build(page), over whatever is showing. small_title is the small line above the title, by default
+ * the title of the screen it opens over, or "Settings". */
+static int l_screen(lua_State *co) {
+    luaL_checktype(co, 1, LUA_TTABLE);
+    const char *title = opt_field(co, "title"), *small_title = opt_field(co, "small_title");
+    if (!title) return luaL_error(co, "nk.screen needs a title");
+    if (!small_title) small_title = kit_top_screen_title();
+    lua_getfield(co, 1, "build");
+    kit_lua_open_screen(co, title, small_title ? small_title : "Settings", lua_gettop(co));
+    lua_pop(co, 1);
+    return 0;
+}
+
+/* ---- Kobo's own widgets, from nk.on_screen ---- */
+
+static QObject *find_deep(QObject *parent, const QString &name) {
+    foreach (QObject *kid, parent->children()) {
+        if (kid->objectName() == name) return kid;
+        QObject *deeper = find_deep(kid, name);
+        if (deeper) return deeper;
     }
     return 0;
 }
 
-static struct {
-    char *title;
-    int open;
-} more_place;
-
-static void open_more(void *) {
-    if (!ready_to_open()) return;
-    resume(task(more_place.open), 0);
+/* widget:find(name): the widget inside it with that object name, or nil. */
+static int widget_find(lua_State *co) {
+    QObject *inside = find_deep(check_handle(co, "nk.widget"), QString::fromUtf8(luaL_checkstring(co, 2)));
+    if (!inside) return 0;
+    push_handle(co, inside, "nk.widget");
+    return 1;
 }
 
-/* nk.more(title, icon, open): a row on the More page, with icons/<icon>.png, running open(). */
-static int l_more(lua_State *co) {
-    const char *title = luaL_checkstring(co, 1), *icon = luaL_checkstring(co, 2);
-    int open = ref_function(co, 3);
-    if (more_place.open) luaL_unref(co, LUA_REGISTRYINDEX, more_place.open);
-    more_place.open = open;
-    if (more_place.title) return 0;
-    const Embedded *png = find_embedded((QByteArray("icons/") + icon + ".png").constData());
-    if (!png) return luaL_error(co, "no icons/%s.png", icon);
-    more_place.title = strdup(title);
-    nk_more_row(more_place.title, png->data, png->size, open_more, 0);
+/* widget:text(): its text, for labels and anything else with a text property. */
+static int widget_text(lua_State *co) {
+    QObject *widget = check_handle(co, "nk.widget");
+    QLabel *label = qobject_cast<QLabel *>(widget);
+    QString text = label ? label->text() : widget->property("text").toString();
+    lua_pushstring(co, text.toUtf8().constData());
+    return 1;
+}
+
+/* widget:set(text): changes its text. */
+static int widget_set(lua_State *co) {
+    QObject *widget = check_handle(co, "nk.widget");
+    QString text = QString::fromUtf8(luaL_checkstring(co, 2));
+    QLabel *label = qobject_cast<QLabel *>(widget);
+    if (label) kit_set_text(label, text);
+    else widget->setProperty("text", text);
     return 0;
+}
+
+/* widget:show(on): shows or hides it. */
+static int widget_show(lua_State *co) {
+    QWidget *widget = qobject_cast<QWidget *>(check_handle(co, "nk.widget"));
+    if (widget) widget->setVisible(lua_toboolean(co, 2));
+    return 0;
+}
+
+/* widget:class(): Kobo's name for its class, such as "MoreView". */
+static int widget_class(lua_State *co) {
+    lua_pushstring(co, check_handle(co, "nk.widget")->metaObject()->className());
+    return 1;
 }
 
 /* ---- dialogs ---- */
@@ -823,9 +977,11 @@ extern "C" void nk_mod_init(void) {
     add_type("nk.page", page_methods, page_gc);
     add_type("nk.toggle", toggle_methods, handle_gc);
     add_type("nk.label", label_methods, handle_gc);
+    static const luaL_Reg widget_methods[] = {{"find", widget_find}, {"text", widget_text}, {"set", widget_set}, {"show", widget_show}, {"class", widget_class}, {0, 0}};
+    add_type("nk.widget", widget_methods, handle_gc);
     add_type("nk.timer", timer_methods, 0);
 
-    static const luaL_Reg nk[] = {{"log", l_log}, {"settings", l_settings}, {"more", l_more}, {"screen", l_screen},
+    static const luaL_Reg nk[] = {{"log", l_log}, {"settings", l_settings}, {"more", l_more}, {"on_screen", l_on_screen}, {"screen", l_screen},
                                   {"confirm", l_confirm}, {"error", l_error}, {"after", l_after}, {"every", l_every},
                                   {"sleep", l_sleep}, {"go", l_go}, {"time", l_time}, {"pref", l_pref}, {"set_pref", l_set_pref},
                                   {"keep", l_keep}, {"require", l_require}, {0, 0}};

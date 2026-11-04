@@ -1,21 +1,16 @@
 # Mods
 
 Mods add to Kobo's UI using Kobo's own widgets, so a new row or screen looks like it was always there.
-A mod is Lua scripts, or a small C or C++ file, on top of `kit/`. `example/` is a Lua mod that shows what the kit can do, with notes. The kit is C++, built against Qt 5.2.1's headers, the Qt that Nickel runs, and uses Nickel's own Qt when it runs. There's no Qt to install: the build fetches the headers.
+A mod is Lua scripts on top of `kit/`, and the kit's Lua API is what's documented and kept working. `example/` is a Lua mod that shows what the kit can do, with notes. The kit is C++, built against Qt 5.2.1's headers, the Qt that Nickel runs, and uses Nickel's own Qt when it runs. There's no Qt to install: the build fetches the headers. The kit's own C layer, `kit/nk.h`, is internal: C++ mods can use it, but it may change in any release.
 
-```c
-#include "../kit/nk.h"
-
-static void build(NkScreen *screen, void *arg) {
-    nk_section(screen, "HELLO");
-    nk_value_row(screen, "Greeting", "Hi");
-    nk_toggle_row(screen, "Be friendly", 1, on_change, 0);
-    nk_button_row(screen, "Say it", "Start", on_start, 0);
-}
-
-static void open_screen(void *arg) { nk_open_screen("Hello", "More", build, 0); }
-
-void nk_mod_init(void) { nk_more_row("Hello", icon, sizeof icon, open_screen, 0); }
+```lua
+-- main.lua: a row in Kobo's Settings, opening a screen of Kobo's own rows.
+nk.settings{name = "Hello", build = function(page)
+  page:section("HELLO")
+  page:value("Greeting", "Hi")
+  page:toggle("Be friendly", true, function(on) nk.log("friendly: " .. tostring(on)) end)
+  page:button("Say it", "Start", function() nk.toast("Hello", "Hi there") end)
+end}
 ```
 
 Build it with `mods/build.sh <folder>`, which needs zig 0.17.0, curl the first time (for Qt's headers, which `kit/qt-headers.sh` fetches into `build/qt` and checks), and Python with PyYAML for `patches`. It writes

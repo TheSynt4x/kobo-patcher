@@ -237,6 +237,19 @@ static const struct {
     {"settings", ":/images/reading/settings_gear.png"},
 };
 
+/* One of Kobo's icons by name, or else the mod's own icons/<name>.png, which is scaled to fit
+ * size. Null if there's neither. Only when a page is built: never while the mod loads. */
+static QPixmap icon_pixmap(const char *name, int size) {
+    for (unsigned i = 0; i < sizeof icons / sizeof *icons; i++)
+        if (!strcmp(icons[i].name, name)) return QPixmap(QString::fromLatin1(icons[i].path));
+    const unsigned char *data;
+    unsigned bytes;
+    QPixmap image;
+    QByteArray file = QByteArray("icons/") + name + ".png";
+    if (!kit_embedded(file.constData(), &data, &bytes) || !image.loadFromData(data, bytes, "PNG")) return QPixmap();
+    return image.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 typedef void (*TouchCtor)(void *self, QWidget *parent, int flags);
 
 /* Kobo's tappable label, to hold a block's parts. */
@@ -260,7 +273,8 @@ static QLabel *tap_square(QWidget *parent, const QPixmap &image, int size, void 
 }
 
 /* page:heading(text, icon, tapped): a large title, as at the top of Kobo's More page. With an
- * icon, such as "settings", it's on the right, and tapped() runs when it's tapped. */
+ * icon it's on the right, and tapped() runs when it's tapped: one of Kobo's, such as "settings",
+ * or the mod's own icons/<icon>.png, scaled to Kobo's size for it. */
 static int page_heading(lua_State *co) {
     PagingContainer *paging = kit_check_page(co);
     const char *text = luaL_checkstring(co, 2);
@@ -272,12 +286,9 @@ static int page_heading(lua_State *co) {
     QLabel *heading = kobo_label(holder, "HeaderMediumLabel", QString::fromUtf8(text));
     heading->setWordWrap(true);
     line->addWidget(heading, 1, Qt::AlignVCenter);
-    const char *path = 0;
-    for (unsigned i = 0; icon && i < sizeof icons / sizeof *icons; i++)
-        if (!strcmp(icons[i].name, icon)) path = icons[i].path;
-    if (icon && !path) return luaL_error(co, "no icon called %s", icon);
-    QPixmap image(path ? QString::fromLatin1(path) : QString());
-    if (path && !image.isNull()) {
+    QPixmap image = icon ? icon_pixmap(icon, px(32)) : QPixmap();
+    if (icon && image.isNull()) return luaL_error(co, "no icon called %s, of Kobo's or in icons/", icon);
+    if (!image.isNull()) {
         Action *action = new Action(holder);
         action->hook = kit_hook(co, 4, action);
         QPointer<Action> *arg = new QPointer<Action>(action);
@@ -292,8 +303,9 @@ static int page_heading(lua_State *co) {
 
 /* ---- books ---- */
 
-/* Two rows of books fit on a page under a search box and a heading. */
-enum { SHELF_COLUMNS = 3, TILE_WIDTH = 190, TILE_COVER = 220, BOOK_COVER_WIDTH = 230, BOOK_COVER = 345 };
+/* A shelf is SHELF_WIDTH across, on the Nia, whatever its number of columns: three books of
+ * TILE_WIDTH by default. Covers keep TILE_WIDTH to TILE_COVER. */
+enum { SHELF_COLUMNS = 3, SHELF_WIDTH = 570, TILE_WIDTH = 190, TILE_COVER = 220, BOOK_COVER_WIDTH = 230, BOOK_COVER = 345 };
 
 /* A shelf's books, kept to change them. It goes with the page. */
 class Books : public QObject {
@@ -301,6 +313,7 @@ public:
     explicit Books(QObject *parent) : QObject(parent), hook(0) {}
     struct Tile {
         QPointer<QLabel> tile, cover, title, author, status;
+        int width, height; /* the cover's, in pixels */
     };
     QList<Tile> tiles;
     KitHook *hook;
@@ -365,23 +378,25 @@ static void fill_tile(lua_State *co, int book, Books::Tile &tile) {
     if (field_of(co, book, "author", &text) && tile.author) set_caption(tile.author, text);
     if (field_of(co, book, "status", &text) && tile.status) set_badge(tile.status, text);
     if (field_of(co, book, "cover", &text) && tile.cover)
-        show_cover(tile.cover, image_path(text.toUtf8().constData()), px(TILE_WIDTH), px(TILE_COVER), true);
+        show_cover(tile.cover, image_path(text.toUtf8().constData()), tile.width, tile.height, true);
 }
 
 /* A book as Kobo's Home shows one: its cover, its title under it, and its author in grey capitals. */
-static Books::Tile add_tile(QWidget *row, Books *books, int index) {
+static Books::Tile add_tile(QWidget *row, Books *books, int index, int width, int height) {
     Books::Tile parts;
+    parts.width = width;
+    parts.height = height;
     QLabel *tile = touch_label(row);
     tile->setObjectName(QStringLiteral("nkBook"));
-    tile->setFixedWidth(px(TILE_WIDTH));
+    tile->setFixedWidth(width);
     parts.tile = tile;
     QVBoxLayout *column = new QVBoxLayout(tile);
     column->setContentsMargins(0, 0, 0, 0);
     column->setSpacing(0);
     QWidget *box = new QWidget(tile);
-    box->setFixedSize(px(TILE_WIDTH), px(TILE_COVER));
+    box->setFixedSize(width, height);
     parts.cover = new (alloc(0x40)) QLabel(box, 0);
-    show_cover(parts.cover, QString(), px(TILE_WIDTH), px(TILE_COVER), true);
+    show_cover(parts.cover, QString(), width, height, true);
     parts.status = kobo_label(box, "MetaDataLabel", QString());
     parts.status->setStyleSheet(QStringLiteral("background-color: black; color: white; padding: %1px %2px;").arg(px(4)).arg(px(8)));
     parts.status->hide();
@@ -389,8 +404,8 @@ static Books::Tile add_tile(QWidget *row, Books *books, int index) {
     column->addSpacing(px(SPACE));
     parts.title = kobo_label(tile, "RegularLabel", QString());
     parts.author = kobo_label(tile, "MetaDataLabel", QString());
-    parts.title->setFixedWidth(px(TILE_WIDTH));
-    parts.author->setFixedWidth(px(TILE_WIDTH));
+    parts.title->setFixedWidth(width);
+    parts.author->setFixedWidth(width);
     column->addWidget(parts.title, 0, 0);
     column->addWidget(parts.author, 0, 0);
     column->addStretch(1);
@@ -398,7 +413,7 @@ static Books::Tile add_tile(QWidget *row, Books *books, int index) {
      * TouchLabel is as tall as its text, not its layout, so it's told. */
     parts.title->ensurePolished();
     parts.author->ensurePolished();
-    tile->setFixedHeight(px(TILE_COVER) + px(SPACE) + parts.title->fontMetrics().lineSpacing() * 2 +
+    tile->setFixedHeight(height + px(SPACE) + parts.title->fontMetrics().lineSpacing() * 2 +
                          parts.author->fontMetrics().height());
 
     Tap *tap = new Tap();
@@ -409,31 +424,40 @@ static Books::Tile add_tile(QWidget *row, Books *books, int index) {
     return parts;
 }
 
-/* page:books(list, tapped): the books three across, as Kobo's Home shows them. A book is a table
- * of title, author, cover (a path) and status, shown on its cover. tapped(i) runs when the i-th is
- * tapped. The handle's :set(i, book) changes the fields given. */
+/* page:books(list, tapped, {columns = }): the books three across, or columns across (1 to 6), as
+ * Kobo's Home shows them, in the same width whatever the columns. A book is a table of title,
+ * author, cover (a path) and status, shown on its cover. tapped(i) runs when the i-th is tapped.
+ * The handle's :set(i, book) changes the fields given. */
 static int page_books(lua_State *co) {
     PagingContainer *paging = kit_check_page(co);
     luaL_checktype(co, 2, LUA_TTABLE);
     luaL_checktype(co, 3, LUA_TFUNCTION);
+    int columns = SHELF_COLUMNS;
+    if (lua_istable(co, 4)) {
+        lua_getfield(co, 4, "columns");
+        if (!lua_isnil(co, -1)) columns = int(luaL_checkinteger(co, -1));
+        lua_pop(co, 1);
+        if (columns < 1 || columns > 6) return luaL_error(co, "page:books takes 1 to 6 columns");
+    }
+    int width = px(SHELF_WIDTH) / columns, height = width * TILE_COVER / TILE_WIDTH;
     Books *books = new Books(paging);
     books->hook = kit_hook(co, 3, books);
     lua_Integer count = luaL_len(co, 2);
     if (count > 500) count = 500;
     /* A row a block, so pages turn between rows. */
-    for (lua_Integer first = 1; first <= count; first += SHELF_COLUMNS) {
+    for (lua_Integer first = 1; first <= count; first += columns) {
         QWidget *row = new QWidget(paging);
         QHBoxLayout *line = new QHBoxLayout(row);
         line->setContentsMargins(0, 0, 0, px(GAP));
         line->setSpacing(0);
-        for (int j = 0; j < SHELF_COLUMNS; j++) {
+        for (int j = 0; j < columns; j++) {
             if (j) line->addStretch(1);
             lua_Integer i = first + j;
             QWidget *slot = 0;
             if (i <= count) {
                 Books::Tile tile;
                 if (lua_geti(co, 2, i) == LUA_TTABLE) {
-                    tile = add_tile(row, books, int(i - 1));
+                    tile = add_tile(row, books, int(i - 1), width, height);
                     fill_tile(co, lua_gettop(co), tile);
                     slot = tile.tile;
                 }
@@ -442,7 +466,7 @@ static int page_books(lua_State *co) {
             }
             if (!slot) {
                 slot = new QWidget(row);
-                slot->setFixedWidth(px(TILE_WIDTH));
+                slot->setFixedWidth(width);
             }
             line->addWidget(slot, 0, Qt::AlignTop);
         }
@@ -843,13 +867,20 @@ static Tab *tab_of(QWidget *widget) {
     return 0;
 }
 
-/* page:open(build): a page of the tab's own over this one, built by build(page), with Kobo's
- * back arrow to return. */
+/* page:open(build, title): a page over this one, built by build(page), with Kobo's back arrow to
+ * return. On a tab it's the tab's own page. On a screen it's a screen over it, with the title given,
+ * or this screen's, and this screen's title as its small title. */
 static int page_open(lua_State *co) {
     PagingContainer *paging = kit_check_page(co);
     luaL_checktype(co, 2, LUA_TFUNCTION);
     Tab *t = tab_of(reinterpret_cast<QWidget *>(paging));
-    if (!t) return luaL_error(co, "page:open is for a tab's pages");
+    if (!t) {
+        const char *over = kit_top_screen_title();
+        QByteArray small_title(over ? over : "Settings");
+        const char *title = luaL_optstring(co, 3, small_title.constData());
+        kit_lua_open_screen(co, title, small_title.constData(), 2);
+        return 0;
+    }
     lua_pushvalue(co, 2);
     t->stack << luaL_ref(co, LUA_REGISTRYINDEX);
     reopen_soon(t);

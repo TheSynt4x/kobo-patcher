@@ -211,15 +211,15 @@ if not state.started then
   read_choices()
   load_list()
 end
-nk.settings("Kobo Patcher", build)
+nk.settings{name = "Kobo Patcher", build = build}
 
 -- KOReader's own launcher stops Nickel, and starts it again when KOReader quits.
 if nk.file.exists(KOREADER) then
-  nk.more("KOReader", "koreader", function()
+  nk.more{name = "KOReader", icon = "koreader", open = function()
     if not nk.file.exists(KOREADER) then
       return nk.error("KOReader isn't installed", "Add it again from kobo.thesynt4x.dev, then restart your Kobo.")
     end
     nk.log("starting KOReader")
     nk.spawn("exec " .. KOREADER)
-  end)
+  end}
 end

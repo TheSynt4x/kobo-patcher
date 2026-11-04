@@ -1,7 +1,10 @@
-/* A small kit for adding to Kobo's UI with Kobo's own widgets, so new things look like they
- * belong. The kit is C++ built against Qt 5.2.1's headers, and these C functions are a thin layer
- * over it. Every symbol it needs is checked when Nickel loads the mod, and a mod that can't find
- * one on this firmware stays out of the way. */
+/* The kit's own C layer, for adding to Kobo's UI with Kobo's own widgets, so new things look like
+ * they belong. The kit is C++ built against Qt 5.2.1's headers, and these C functions are a thin
+ * layer over it. Every symbol it needs is checked when Nickel loads the mod, and a mod that can't
+ * find one on this firmware stays out of the way.
+ *
+ * This header is internal. Mods are written in Lua, whose API is the one that's documented and kept
+ * working. C++ mods may use this, but it can change in any release, and they keep up with it. */
 #ifndef NK_H
 #define NK_H
 
@@ -33,12 +36,19 @@ void nk_failsafe(int seconds);
 /* Replace a function that libnickel calls. Returns the original, or 0 if it can't. */
 void *nk_hook(const char *symbol, void *replacement);
 
+/* Run built(view, arg) each time Nickel makes a widget of one of Kobo's classes, such as
+ * "MoreView", once its constructor is done. Only for classes made with a parent widget,
+ * Class::Class(QWidget*); view is the QWidget. Several can watch the same class. Call from
+ * nk_mod_init. Returns 0 if this firmware has no such class. */
+typedef void (*NkBuiltFn)(void *view, void *arg);
+int nk_on_screen(const char *cls, NkBuiltFn built, void *arg);
+
 /* Add a row to the More page above Settings, with a PNG icon built into the mod. Tapping it runs
- * open(arg). Call from nk_mod_init. If this firmware lacks anything the kit needs, there's no row. */
+ * open(arg). Call from nk_mod_init; a mod can add several. If More isn't as expected, there's no row. */
 void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg);
 
-/* Add a row at the top of Kobo's Settings list, styled like Kobo's own. Tapping it
- * runs open(arg). Call from nk_mod_init. If Settings isn't laid out as expected, there's no row. */
+/* Add a row at the top of Kobo's Settings list, styled like Kobo's own. Tapping it runs open(arg).
+ * Call from nk_mod_init; a mod can add several. If Settings isn't laid out as expected, there's no row. */
 void nk_settings_row(const char *title, NkFn open, void *arg);
 
 /* Open a settings-style screen. build(screen, arg) fills it in when it opens; pages and the close

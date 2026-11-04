@@ -5,7 +5,7 @@ local count = require "count"
 -- Kept when the scripts are reloaded during development.
 local state = nk.keep { taps = 0 }
 
-nk.settings("Example", function(page)
+nk.settings{name = "Example", build = function(page)
   page:section("FROM LUA")
   page:text("This screen is built by main.lua in the example mod. Tap the rows to try what a mod can do.")
   page:value("Taps so far", count.describe(state.taps))
@@ -59,6 +59,6 @@ nk.settings("Example", function(page)
     })
     status:set(ok and "Downloaded and checked" or ("Download failed: " .. why))
   end)
-end)
+end}
 
 nk.log("example started")
