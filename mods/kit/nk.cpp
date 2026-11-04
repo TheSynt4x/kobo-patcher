@@ -833,14 +833,20 @@ extern "C" __attribute__((visibility("default"))) void *qt_plugin_instance(void)
  * it's being tried, so a crash, or a freeze that ends with the power held off, means it isn't loaded
  * next time. It's put back once Nickel's main thread has carried on for a quiet while: the guard's
  * thread only puts it back after a heartbeat from the main thread's event loop, so time passing
- * while Nickel is frozen doesn't count. Each move is synced, because a frozen Kobo gets held off, and
- * an unsynced move can be lost with the power. */
+ * while Nickel is frozen doesn't count. If the main thread hasn't run for FREEZE_SECONDS while the
+ * guard is on, Nickel is frozen, and the guard's thread stops it, as a crash would, so the Kobo starts
+ * again without the mod and nobody has to hold the power off. Each move is synced, because a frozen
+ * Kobo gets held off, and an unsynced move can be lost with the power. */
 static void failsafe_arm(void) { rename(INSTALLED_AT, DISABLED_AT); sync(); }
 static void failsafe_clear(void) { rename(DISABLED_AT, INSTALLED_AT); sync(); }
 
 static pthread_mutex_t failsafe_lock = PTHREAD_MUTEX_INITIALIZER;
 static long failsafe_until; /* while this is set, a thread clears the guard once it's passed */
 static long alive_at;       /* when the main thread's event loop last ran, from its heartbeat */
+static long armed_at;       /* when the guard last went on */
+static bool beating;        /* the heartbeat is running, so a quiet main thread means a freeze */
+/* Far longer than Nickel takes to start, or ever keeps its main thread busy. */
+enum { FREEZE_SECONDS = 180 };
 
 static long now(void) {
     struct timespec t;
@@ -859,7 +865,14 @@ static void *failsafe_wait(void *) {
             nk_log("failsafe cleared");
             return 0;
         }
+        long alive = __atomic_load_n(&alive_at, __ATOMIC_ACQUIRE);
+        long quiet = now() - (alive > armed_at ? alive : armed_at);
         pthread_mutex_unlock(&failsafe_lock);
+        if (beating && quiet >= FREEZE_SECONDS) {
+            nk_log("Nickel hasn't run for %ld seconds while the guard was on, so it's stopped, with the mod set aside", quiet);
+            sync();
+            abort();
+        }
         sleep(left > 0 ? left : 1);
     }
 }
@@ -875,12 +888,14 @@ static void start_heartbeat(void) {
     QTimer *beat = new QTimer();
     QObject::connect(beat, &QTimer::timeout, [] { __atomic_store_n(&alive_at, now(), __ATOMIC_RELEASE); });
     beat->start(1000);
+    beating = true;
 }
 
 void nk_failsafe(int seconds) {
     pthread_mutex_lock(&failsafe_lock);
     if (!failsafe_until) {
         failsafe_arm();
+        armed_at = now();
         pthread_t thread;
         pthread_create(&thread, 0, failsafe_wait, 0);
         pthread_detach(thread);
