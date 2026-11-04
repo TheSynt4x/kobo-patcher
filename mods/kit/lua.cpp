@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QLabel>
 #include <QList>
 #include <QPointer>
 #include <QTimer>
@@ -192,13 +193,17 @@ static bool ready_to_open() {
     return true;
 }
 
+bool kit_ready_to_open() { return ready_to_open(); }
+
 /* ---- screens and their blocks ---- */
 
+/* Every page is a PagingContainer, Kobo's own list that turns pages, whether it's a screen's or a
+ * tab's. Blocks are added to it in order. */
 struct Page {
     QPointer<QWidget> paging;
     int build;
     bool refreshing;
-    const char *title, *small_title;
+    bool tab;
 };
 
 static Page *check_page(lua_State *co) {
@@ -207,16 +212,19 @@ static Page *check_page(lua_State *co) {
     return page;
 }
 
+PagingContainer *kit_check_page(lua_State *co) { return static_cast<PagingContainer *>(check_page(co)->paging.data()); }
+
 static NkScreen screen_of(Page *page) {
     NkScreen screen = {static_cast<PagingContainer *>(page->paging.data())};
     return screen;
 }
 
 /* A callback for a block, with what it needs to run. */
-struct Hook {
+struct KitHook {
     int fn;
     QPointer<QObject> widget;
 };
+typedef KitHook Hook;
 
 static Hook *new_hook(lua_State *co, int index) {
     Hook *hook = new Hook;
@@ -232,6 +240,14 @@ static void hook_to(Hook *hook, QObject *widget) {
         delete hook;
     });
 }
+
+KitHook *kit_hook(lua_State *co, int index, QObject *widget) {
+    Hook *hook = new_hook(co, index);
+    hook_to(hook, widget);
+    return hook;
+}
+
+lua_State *kit_hook_task(KitHook *hook) { return hook->widget ? task(hook->fn) : 0; }
 
 static void tapped(void *arg) {
     resume(task(static_cast<Hook *>(arg)->fn), 0);
@@ -257,30 +273,40 @@ static QObject *check_handle(lua_State *co, const char *type) {
     return handle->data();
 }
 
+void kit_push_handle(lua_State *co, QObject *widget, const char *type) { push_handle(co, widget, type); }
+
+QObject *kit_check_handle(lua_State *co, int index, const char *type) {
+    QPointer<QObject> *handle = static_cast<QPointer<QObject> *>(luaL_checkudata(co, index, type));
+    if (!*handle) luaL_error(co, "this block has gone");
+    return handle->data();
+}
+
 static int handle_gc(lua_State *co) {
     static_cast<QPointer<QObject> *>(lua_touserdata(co, 1))->~QPointer<QObject>();
     return 0;
 }
 
+/* Every block returns a handle, whose text can change with :set(text). */
 static int page_section(lua_State *co) {
     Page *page = check_page(co);
     NkScreen s = screen_of(page);
-    nk_section(&s, luaL_checkstring(co, 2));
-    return 0;
+    push_handle(co, reinterpret_cast<QObject *>(nk_section(&s, luaL_checkstring(co, 2))), "nk.label");
+    return 1;
 }
 
 static int page_text(lua_State *co) {
     Page *page = check_page(co);
     NkScreen s = screen_of(page);
-    nk_text(&s, luaL_checkstring(co, 2));
-    return 0;
+    push_handle(co, reinterpret_cast<QObject *>(nk_text(&s, luaL_checkstring(co, 2))), "nk.label");
+    return 1;
 }
 
+/* Its handle is the value's. */
 static int page_value(lua_State *co) {
     Page *page = check_page(co);
     NkScreen s = screen_of(page);
-    nk_value_row(&s, luaL_checkstring(co, 2), luaL_checkstring(co, 3));
-    return 0;
+    push_handle(co, reinterpret_cast<QObject *>(nk_value_row(&s, luaL_checkstring(co, 2), luaL_checkstring(co, 3))), "nk.label");
+    return 1;
 }
 
 /* page:toggle(title, on, changed): changed(on) runs whenever it's ticked or unticked. */
@@ -307,21 +333,33 @@ static int toggle_set(lua_State *co) {
     return 0;
 }
 
-/* page:button(title, label, tapped). Returns the row, whose title can change with row:set(text). */
+/* page:button(title, label, tapped). Returns the title and the button, as handles. */
 static int page_button(lua_State *co) {
     Page *page = check_page(co);
     const char *title = luaL_checkstring(co, 2), *button = luaL_checkstring(co, 3);
     Hook *hook = new_hook(co, 4);
     NkScreen s = screen_of(page);
-    NkLabel *label = nk_button_row(&s, title, button, tapped, hook);
-    hook_to(hook, reinterpret_cast<QObject *>(label));
-    push_handle(co, hook->widget, "nk.label");
-    return 1;
+    QLabel *label = reinterpret_cast<QLabel *>(nk_button_row(&s, title, button, tapped, hook));
+    hook_to(hook, label);
+    push_handle(co, label, "nk.label");
+    QList<QLabel *> labels = label->parentWidget()->findChildren<QLabel *>();
+    QLabel *action = 0;
+    for (int i = 0; i < labels.size(); i++)
+        if (labels[i]->inherits("N3ButtonLabel")) action = labels[i];
+    push_handle(co, action, "nk.label");
+    return 2;
 }
 
 static int label_set(lua_State *co) {
-    NkLabel *label = reinterpret_cast<NkLabel *>(check_handle(co, "nk.label"));
-    nk_label_set(label, luaL_checkstring(co, 2));
+    QLabel *label = static_cast<QLabel *>(check_handle(co, "nk.label"));
+    const char *text = luaL_checkstring(co, 2);
+    kit_set_text(label, QString::fromUtf8(text));
+    return 0;
+}
+
+/* handle:show(on): a block that isn't shown takes no room. */
+static int label_show(lua_State *co) {
+    static_cast<QWidget *>(check_handle(co, "nk.label"))->setVisible(lua_toboolean(co, 2));
     return 0;
 }
 
@@ -331,16 +369,17 @@ static void build_page(Page *page, int page_ref) {
     resume(co, 1);
 }
 
-/* page:refresh(): the screen is built again by its build function, from the script's own state.
- * The screen is closed and opened again, once the current tap or timer is done, since the widget
- * it came from goes with the screen. Only the screen opened last can be refreshed. */
+/* page:refresh(): the page is built again by its build function, from the script's own state.
+ * Its screen or tab is closed and opened again, once the current tap or timer is done, since the
+ * widget it came from goes with it. Only the screen opened last can be refreshed. */
 static void rebuild(void *arg) {
     int page_ref = static_cast<int>(reinterpret_cast<intptr_t>(arg));
     lua_rawgeti(L, LUA_REGISTRYINDEX, page_ref);
     Page *page = static_cast<Page *>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     page->refreshing = false;
-    if (page->paging) kit_reopen_screen();
+    if (page->paging && page->tab) kit_reopen_tab();
+    else if (page->paging) kit_reopen_screen();
     luaL_unref(L, LUA_REGISTRYINDEX, page_ref);
 }
 
@@ -358,18 +397,20 @@ static int page_refresh(lua_State *co) {
     return 0;
 }
 
-static void build_screen(NkScreen *screen, void *arg) {
-    int build = *static_cast<int *>(arg);
+void kit_build_page(PagingContainer *paging, int build, bool tab) {
     Page *page = static_cast<Page *>(lua_newuserdatauv(L, sizeof(Page), 0));
     new (page) Page();
-    page->paging = screen->paging;
+    page->paging = paging;
     page->build = build;
+    page->tab = tab;
     luaL_setmetatable(L, "nk.page");
     int page_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     build_page(page, page_ref);
     /* The page stays referenced while it's on screen, for page:refresh from a callback. */
-    QObject::connect(screen->paging, &QObject::destroyed, [page_ref]() { luaL_unref(L, LUA_REGISTRYINDEX, page_ref); });
+    QObject::connect(paging, &QObject::destroyed, [page_ref]() { luaL_unref(L, LUA_REGISTRYINDEX, page_ref); });
 }
+
+static void build_screen(NkScreen *screen, void *arg) { kit_build_page(screen->paging, *static_cast<int *>(arg), false); }
 
 static int page_gc(lua_State *co) {
     static_cast<Page *>(lua_touserdata(co, 1))->~Page();
@@ -529,11 +570,24 @@ static int timer_stop(lua_State *co) {
     return 0;
 }
 
+/* nk.go(fn): runs fn on its own, straight after this callback, so several things can wait at once. */
+static int l_go(lua_State *co) {
+    int fn = ref_function(co, 1);
+    start_timer(0, false)->fn = fn;
+    return 0;
+}
+
 static int l_sleep(lua_State *co) {
     must_wait_here(co);
     int ms = (int)luaL_checkinteger(co, 1);
     start_timer(ms, false)->co = co;
     return lua_yield(co, 0);
+}
+
+/* nk.time(): seconds since 1970, in UTC. */
+static int l_time(lua_State *co) {
+    lua_pushinteger(co, QDateTime::currentMSecsSinceEpoch() / 1000);
+    return 1;
 }
 
 /* ---- storage ---- */
@@ -638,6 +692,17 @@ static int l_log(lua_State *co) {
     return 0;
 }
 
+static void add_type(const char *name, const luaL_Reg *methods, lua_CFunction gc);
+
+void kit_add_type(const char *type, const luaL_Reg *methods) { add_type(type, methods, handle_gc); }
+
+void kit_add_page_methods(const luaL_Reg *methods) {
+    luaL_getmetatable(L, "nk.page");
+    lua_getfield(L, -1, "__index");
+    luaL_setfuncs(L, methods, 0);
+    lua_pop(L, 2);
+}
+
 static void add_type(const char *name, const luaL_Reg *methods, lua_CFunction gc) {
     luaL_newmetatable(L, name);
     lua_newtable(L);
@@ -679,7 +744,7 @@ extern "C" void nk_mod_init(void) {
     static const luaL_Reg page_methods[] = {{"section", page_section}, {"text", page_text}, {"value", page_value},
                                            {"toggle", page_toggle}, {"button", page_button}, {"refresh", page_refresh}, {0, 0}};
     static const luaL_Reg toggle_methods[] = {{"on", toggle_on}, {"set", toggle_set}, {0, 0}};
-    static const luaL_Reg label_methods[] = {{"set", label_set}, {0, 0}};
+    static const luaL_Reg label_methods[] = {{"set", label_set}, {"show", label_show}, {0, 0}};
     static const luaL_Reg timer_methods[] = {{"stop", timer_stop}, {0, 0}};
     add_type("nk.page", page_methods, page_gc);
     add_type("nk.toggle", toggle_methods, handle_gc);
@@ -688,10 +753,11 @@ extern "C" void nk_mod_init(void) {
 
     static const luaL_Reg nk[] = {{"log", l_log}, {"settings", l_settings}, {"more", l_more}, {"screen", l_screen},
                                   {"confirm", l_confirm}, {"error", l_error}, {"after", l_after}, {"every", l_every},
-                                  {"sleep", l_sleep}, {"pref", l_pref}, {"set_pref", l_set_pref}, {"keep", l_keep},
-                                  {"require", l_require}, {0, 0}};
+                                  {"sleep", l_sleep}, {"go", l_go}, {"time", l_time}, {"pref", l_pref}, {"set_pref", l_set_pref},
+                                  {"keep", l_keep}, {"require", l_require}, {0, 0}};
     luaL_newlib(L, nk);
     kit_open_tools(L);
+    kit_open_ui(L);
     lua_pushstring(L, NK_NAME);
     lua_setfield(L, -2, "name");
     lua_setglobal(L, "nk");

@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 typedef struct NkScreen NkScreen;
+typedef struct NkLabel NkLabel;
 typedef void (*NkFn)(void *arg);
 
 /* Each mod defines this. It runs once, when Nickel loads the mod, before any UI exists. */
@@ -44,14 +45,14 @@ void nk_settings_row(const char *title, NkFn open, void *arg);
  * button come with the screen. */
 void nk_open_screen(const char *title, const char *small_title, void (*build)(NkScreen *, void *), void *arg);
 
-/* The grey section heading, as in Beta Features. */
-void nk_section(NkScreen *s, const char *title);
+/* The grey section heading, as in Beta Features. Each of these returns its label, for nk_label_set. */
+NkLabel *nk_section(NkScreen *s, const char *title);
 
 /* A line of text. */
-void nk_text(NkScreen *s, const char *text);
+NkLabel *nk_text(NkScreen *s, const char *text);
 
-/* A row with a title on the left and italic text on the right. */
-void nk_value_row(NkScreen *s, const char *title, const char *value);
+/* A row with a title on the left and italic text on the right. Returns the italic text. */
+NkLabel *nk_value_row(NkScreen *s, const char *title, const char *value);
 
 /* A row with a title and Kobo's "On" tick box. changed(arg) runs whenever it's ticked or unticked,
  * including by nk_toggle_set. */
@@ -62,7 +63,6 @@ void nk_toggle_set(NkToggle *toggle, int on);
 
 /* A row with a title and an italic button, like Beta Features' "Start". Returns the title, so it
  * can be changed with nk_label_set. */
-typedef struct NkLabel NkLabel;
 NkLabel *nk_button_row(NkScreen *s, const char *title, const char *button, NkFn tapped, void *arg);
 void nk_label_set(NkLabel *label, const char *text);
 

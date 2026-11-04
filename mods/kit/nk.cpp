@@ -437,14 +437,17 @@ static QLabel *label(QWidget *parent, void *vptrs[2], const char *text) {
 
 static void add(NkScreen *s, QWidget *block) { s->paging->addWidget(block); }
 
-void nk_section(NkScreen *s, const char *title) {
-    add(s, label(s->paging, screen.vptrs[LABEL_SECTION], title));
+NkLabel *nk_section(NkScreen *s, const char *title) {
+    QLabel *heading = label(s->paging, screen.vptrs[LABEL_SECTION], title);
+    add(s, heading);
+    return reinterpret_cast<NkLabel *>(heading);
 }
 
-void nk_text(NkScreen *s, const char *text) {
+NkLabel *nk_text(NkScreen *s, const char *text) {
     QLabel *line = label(s->paging, screen.vptrs[LABEL_TEXT], text);
     line->setWordWrap(true);
     add(s, line);
+    return reinterpret_cast<NkLabel *>(line);
 }
 
 /* A settings row: Kobo's container, with the title on the left filling the row. */
@@ -464,13 +467,14 @@ static Row row_with_title(NkScreen *s, const char *title) {
     return r;
 }
 
-void nk_value_row(NkScreen *s, const char *title, const char *value) {
+NkLabel *nk_value_row(NkScreen *s, const char *title, const char *value) {
     Row r = row_with_title(s, title);
     QLabel *right = label(0, italic_label_vptr, value);
     /* Lines the value up with the "On" and "Start" of Kobo's own settings rows. */
     right->setStyleSheet(QStringLiteral("padding-right: 17px;"));
     r.box->addWidget(right, 0, 0);
     add(s, r.row);
+    return reinterpret_cast<NkLabel *>(right);
 }
 
 NkToggle *nk_toggle_row(NkScreen *s, const char *title, int on, NkFn changed, void *arg) {

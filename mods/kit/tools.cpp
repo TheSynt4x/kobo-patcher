@@ -1,5 +1,5 @@
 /* The kit's tools for Lua mods: the network, downloads, Kobo's import, JSON, regular expressions,
- * files, hashes and signatures, the device, and the mod's own file. The safety rules are in the
+ * text in every alphabet, files, hashes and signatures, the device, and the mod's own file. The safety rules are in the
  * tools, not in the mods:
  *
  * - nk.http follows redirects (Qt 5.2 doesn't), gives up after a timeout, cuts off an answer over
@@ -689,6 +689,21 @@ static int l_gsub(lua_State *co) {
     return 1;
 }
 
+/* ---- nk.text ---- */
+
+/* nk.text.lower(text): lower case in every alphabet, where Lua's string.lower only does ASCII. */
+static int l_lower(lua_State *co) {
+    push_qstring(co, QString::fromUtf8(luaL_checkstring(co, 1)).toLower());
+    return 1;
+}
+
+/* nk.text.decompose(text): letters apart from their accents (Unicode's NFKD), so é is e then an
+ * accent, which nk.re can take out with \p{M}. */
+static int l_decompose(lua_State *co) {
+    push_qstring(co, QString::fromUtf8(luaL_checkstring(co, 1)).normalized(QString::NormalizationForm_KD));
+    return 1;
+}
+
 /* ---- nk.file ---- */
 
 static int file_failed(lua_State *co, const char *why) {
@@ -881,11 +896,13 @@ void kit_open_tools(lua_State *L) {
     static const luaL_Reg crypto_functions[] = {{"md5", l_md5}, {"sha1", l_sha1}, {"sha256", l_sha256}, {"sha512", l_sha512},
                                                 {"ed25519_verify", l_ed25519_verify}, {0, 0}};
     static const luaL_Reg device_functions[] = {{"model", l_model}, {"firmware", l_firmware}, {0, 0}};
+    static const luaL_Reg text_functions[] = {{"lower", l_lower}, {"decompose", l_decompose}, {0, 0}};
     add_library(L, "http", http_functions);
     add_library(L, "re", re_functions);
     add_library(L, "file", file_functions);
     add_library(L, "crypto", crypto_functions);
     add_library(L, "device", device_functions);
+    add_library(L, "text", text_functions);
     static const luaL_Reg self_functions[] = {{"self_sha512", l_self_sha512}, {"replace_self", l_replace_self}, {"reboot", l_reboot},
                                               {"spawn", l_spawn}, {0, 0}};
     luaL_setfuncs(L, self_functions, 0);
