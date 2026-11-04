@@ -20,6 +20,7 @@
 #include <QDesktopWidget>
 #include <QEvent>
 #include <QFile>
+#include <QFont>
 #include <QFrame>
 #include <QGestureEvent>
 #include <QHash>
@@ -616,6 +617,7 @@ struct Keys {
     QObject *controller;
     bool own;
     QPointer<QLineEdit> typing;
+    QObject *receiver; /* what the keyboard types into, for one made again */
 };
 static QHash<QObject *, Keys *> *keyboards; /* by host */
 
@@ -660,16 +662,59 @@ static void committed(void *arg) {
 }
 
 typedef QObject *(*CreateKeyboard)(void *frame, int script, const QLocale &locale);
+static CreateKeyboard real_create_keyboard;
+static QObject *hooked_create_keyboard(void *frame, int script, const QLocale &locale);
+
+/* The kit's own keyboards are made as Kobo's are, through a mod's nk.keyboard.choose if there is one. */
+static QObject *make_keyboard(void *frame, int script) {
+    if (real_create_keyboard) return hooked_create_keyboard(frame, script, QLocale());
+    CreateKeyboard create = reinterpret_cast<CreateKeyboard>(nickel("_ZN13KeyboardFrame14createKeyboardE14KeyboardScriptRK7QLocale"));
+    return create ? create(frame, script, QLocale()) : 0;
+}
 typedef QWidget *(*KeyboardFrameOf)(void *dialog);
 enum { LATIN_KEYBOARD = 1 };
+
+static void connect_keys(Keys *keys);
+
+typedef void (*SetReceiver)(QObject *controller, QObject *receiver, bool unknown);
+
+static bool attach(Keys *keys, QObject *receiver) {
+    static SetReceiver set_receiver;
+    if (!set_receiver) set_receiver = reinterpret_cast<SetReceiver>(nickel("_ZN24SearchKeyboardController11setReceiverEP16KeyboardReceiverb"));
+    if (!keys->controller || !set_receiver || !receiver) return false;
+    set_receiver(keys->controller, receiver, true);
+    keys->receiver = receiver;
+    return true;
+}
+
+/* When its language changes, as with nk.keyboard.reload, the keyboard is made again. */
+static void keys_language_changed(void *arg) {
+    Keys *keys = static_cast<Keys *>(arg);
+    QTimer *soon = new QTimer();
+    soon->setSingleShot(true);
+    QPointer<QWidget> host(keys->host);
+    QObject::connect(soon, &QTimer::timeout, [soon, host, keys]() {
+        soon->deleteLater();
+        if (!host || !keyboards || keyboards->value(host) != keys || !keys->frame) return;
+        connect_keys(keys);
+        if (keys->typing && keys->receiver) attach(keys, keys->receiver);
+    });
+    soon->start(0);
+}
+
+static void connect_keys(Keys *keys) {
+    keys->controller = make_keyboard(keys->frame, LATIN_KEYBOARD);
+    if (!keys->controller) return;
+    nk_connect(keys->controller, "_ZN18KeyboardController15commitRequestedEv", "_ZN18KeyboardController16staticMetaObjectE", committed, keys);
+    nk_connect(keys->controller, "_ZN24SearchKeyboardController15languageChangedE14KeyboardScript", "_ZN24SearchKeyboardController16staticMetaObjectE", keys_language_changed, keys);
+}
 
 static Keys *keys_for(QWidget *host) {
     if (!keyboards) keyboards = new QHash<QObject *, Keys *>;
     if (keyboards->contains(host)) return keyboards->value(host);
-    CreateKeyboard create = reinterpret_cast<CreateKeyboard>(nickel("_ZN13KeyboardFrame14createKeyboardE14KeyboardScriptRK7QLocale"));
     WidgetCtor frame_ctor = reinterpret_cast<WidgetCtor>(nickel("_ZN13KeyboardFrameC1EP7QWidget"));
     KeyboardFrameOf dialog_frame = reinterpret_cast<KeyboardFrameOf>(nickel("_ZN8N3Dialog13keyboardFrameEv"));
-    if (!create || !frame_ctor) return 0;
+    if (!frame_ctor) return 0;
     Keys *keys = new Keys();
     keys->host = host;
     if (host->inherits("N3Dialog") && dialog_frame) keys->frame = dialog_frame(host);
@@ -681,9 +726,7 @@ static Keys *keys_for(QWidget *host) {
         keys->frame = frame;
         keys->own = true;
     }
-    keys->controller = create(keys->frame, LATIN_KEYBOARD, QLocale());
-    if (keys->controller)
-        nk_connect(keys->controller, "_ZN18KeyboardController15commitRequestedEv", "_ZN18KeyboardController16staticMetaObjectE", committed, keys);
+    connect_keys(keys);
     keyboards->insert(host, keys);
     QObject::connect(host, &QObject::destroyed, [host, keys]() {
         keyboards->remove(host);
@@ -692,17 +735,12 @@ static Keys *keys_for(QWidget *host) {
     return keys;
 }
 
-typedef void (*SetReceiver)(QObject *controller, QObject *receiver, bool unknown);
-
 /* A text box was tapped: the keyboard types in it. */
 static void start_typing(void *arg) {
     Field *field = static_cast<Field *>(arg);
     if (!field->edit) return;
-    static SetReceiver set_receiver;
-    if (!set_receiver) set_receiver = reinterpret_cast<SetReceiver>(nickel("_ZN24SearchKeyboardController11setReceiverEP16KeyboardReceiverb"));
     Keys *keys = keys_for(host_of(field->edit));
-    if (!keys || !keys->controller || !set_receiver || !field->receiver) return;
-    set_receiver(keys->controller, field->receiver, true);
+    if (!keys || !attach(keys, field->receiver)) return;
     keys->typing = field->edit;
     field->edit->setFocus();
     show_keys(keys, true);
@@ -1167,6 +1205,167 @@ static int l_tab(lua_State *co) {
     return 0;
 }
 
+/* ---- Kobo's keyboard ---- */
+
+/* Every keyboard in Nickel is made by KeyboardFrame::createKeyboard(script, locale), and every place
+ * that shows one makes it again when the keyboard's languageChanged signal fires. So a mod chooses
+ * the language as a keyboard is made, makes the one showing again with that signal, and can add a
+ * key beside the space bar. */
+typedef void (*LanguageChanged)(void *keyboard, int script);
+static int choose_fn = LUA_NOREF, key_label = LUA_NOREF, key_tapped = LUA_NOREF;
+static QByteArray *key_text;
+static QPointer<QObject> shown_keyboard;
+static int shown_script;
+static QByteArray *shown_language; /* the language code a mod chose for it, or empty */
+
+struct Asked {
+    int script;
+    QByteArray locale;
+};
+
+static void push_asked(lua_State *co, void *arg) {
+    Asked *asked = static_cast<Asked *>(arg);
+    lua_pushinteger(co, asked->script);
+    lua_pushstring(co, asked->locale.constData());
+}
+
+static void push_language(lua_State *co, void *) { lua_pushstring(co, shown_language->constData()); }
+
+static void key_pressed(void *) {
+    if (key_tapped != LUA_NOREF) kit_resume(kit_task(key_tapped), 0);
+}
+
+/* The mod's key goes where the left end of the space bar was, as wide as the key on its right,
+ * and the space bar is that much narrower. */
+static void place_key(QWidget *frame) {
+    QWidget *space = frame->findChild<QWidget *>(QStringLiteral("spaceKey"));
+    if (!space || !space->parentWidget() || frame->findChild<QWidget *>(QStringLiteral("nkKey"))) return;
+    QWidget *row = space->parentWidget();
+    QRect at = space->geometry();
+    /* The key on its right gives the width, and the one on its left, a label like the mod's, the font. */
+    QWidget *next = 0, *before = 0;
+    foreach (QObject *child, row->children()) {
+        QWidget *key = qobject_cast<QWidget *>(child);
+        if (!key || key == space || !key->inherits("VirtualKey") || key->geometry().y() != at.y()) continue;
+        if (key->geometry().x() > at.x() && (!next || key->geometry().x() < next->geometry().x())) next = key;
+        if (key->geometry().x() < at.x() && (!before || key->geometry().x() > before->geometry().x())) before = key;
+    }
+    int width = next ? next->width() : 0, gap = next ? next->geometry().x() - at.right() - 1 : 0;
+    if (width <= 0 || at.width() < 2 * width + gap) return;
+    QByteArray text = key_label != LUA_NOREF ? kit_ask(key_label, push_language, 0) : *key_text;
+    QLabel *key = touch_label(row);
+    key->setObjectName(QStringLiteral("nkKey"));
+    key->setAlignment(Qt::AlignCenter);
+    /* Kobo draws its keys' words smaller than their letters, as on #&+. */
+    QFont font = (before ? before : next)->font();
+    if (font.pixelSize() > 0) font.setPixelSize(font.pixelSize() * 3 / 4);
+    else font.setPointSizeF(font.pointSizeF() * 0.75);
+    key->setFont(font);
+    key->setText(QString::fromUtf8(text));
+    key->setGeometry(at.x(), at.y(), width, at.height());
+    space->setGeometry(at.x() + width + gap, at.y(), at.width() - width - gap, at.height());
+    key->show();
+    if (key->inherits("TouchLabel")) nk_connect(key, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", key_pressed, 0);
+}
+
+static QObject *hooked_create_keyboard(void *frame, int script, const QLocale &locale) {
+    Asked asked = {script, locale.name().toUtf8()};
+    QByteArray code = choose_fn != LUA_NOREF ? kit_ask(choose_fn, push_asked, &asked) : QByteArray();
+    QLocale chosen = code.isEmpty() ? locale : QLocale(QString::fromUtf8(code));
+    QObject *keyboard = real_create_keyboard(frame, script, chosen);
+    shown_keyboard = keyboard;
+    shown_script = script;
+    *shown_language = code;
+    if (key_tapped != LUA_NOREF) {
+        /* Once the keyboard has laid out its keys. */
+        QPointer<QWidget> showing(static_cast<QWidget *>(frame));
+        QTimer *soon = new QTimer();
+        soon->setSingleShot(true);
+        QObject::connect(soon, &QTimer::timeout, [soon, showing]() {
+            soon->deleteLater();
+            if (showing) place_key(showing);
+        });
+        soon->start(0);
+    }
+    return keyboard;
+}
+
+static bool hook_keyboard(lua_State *co) {
+    if (real_create_keyboard) return true;
+    if (!shown_language) shown_language = new QByteArray;
+    if (!key_text) key_text = new QByteArray;
+    const char *symbol = "_ZN13KeyboardFrame14createKeyboardE14KeyboardScriptRK7QLocale";
+    if (!nickel(symbol)) {
+        nk_log("this firmware's keyboard isn't as expected, so nk.keyboard does nothing");
+        return false;
+    }
+    real_create_keyboard = reinterpret_cast<CreateKeyboard>(nk_hook(symbol, reinterpret_cast<void *>(hooked_create_keyboard)));
+    (void)co;
+    return real_create_keyboard != 0;
+}
+
+/* nk.keyboard.choose(fn): fn(script, locale) runs each time Kobo makes a keyboard, with the locale
+ * it was going to use, such as "en_US". It returns a language code, such as "ru" or "sv", for Kobo's
+ * keyboard in that language, or nil to leave it. It has to answer straight away. Kobo has
+ * keyboards for Russian (with Latin letters too), Swedish and Finnish, Norwegian, Danish, German,
+ * French, Romanian, Turkish, Japanese and Chinese; any other language gets the usual keyboard.
+ * Returns false if this firmware's keyboard isn't as expected. Calling it again replaces fn. */
+static int l_keyboard_choose(lua_State *co) {
+    luaL_checktype(co, 1, LUA_TFUNCTION);
+    if (!hook_keyboard(co)) {
+        lua_pushboolean(co, 0);
+        return 1;
+    }
+    if (choose_fn != LUA_NOREF) luaL_unref(co, LUA_REGISTRYINDEX, choose_fn);
+    lua_pushvalue(co, 1);
+    choose_fn = luaL_ref(co, LUA_REGISTRYINDEX);
+    lua_pushboolean(co, 1);
+    return 1;
+}
+
+static void reload_keyboard(void *) {
+    static LanguageChanged language_changed;
+    if (!language_changed) language_changed = reinterpret_cast<LanguageChanged>(nickel("_ZN24SearchKeyboardController15languageChangedE14KeyboardScript"));
+    if (shown_keyboard && language_changed) language_changed(shown_keyboard.data(), shown_script);
+}
+
+/* nk.keyboard.reload(): the keyboard showing is made again, as Kobo does when its language changes,
+ * so choose runs again. Once the current tap is done. */
+static int l_keyboard_reload(lua_State *) {
+    QTimer *soon = new QTimer();
+    soon->setSingleShot(true);
+    kit_connect(soon, &QTimer::timeout, &QTimer::staticMetaObject, reload_keyboard, 0);
+    QObject::connect(soon, &QTimer::timeout, soon, &QObject::deleteLater);
+    soon->start(0);
+    return 0;
+}
+
+/* nk.keyboard.key{label = , tapped = }: a key of the mod's own on every keyboard Kobo makes, left of
+ * the space bar, which gets narrower. label is its text, or a function(language) returning it, given
+ * the language choose picked for this keyboard or "". tapped() runs when it's tapped. Returns false
+ * if this firmware's keyboard isn't as expected. Calling it again replaces the key. */
+static int l_keyboard_key(lua_State *co) {
+    luaL_checktype(co, 1, LUA_TTABLE);
+    if (!hook_keyboard(co)) {
+        lua_pushboolean(co, 0);
+        return 1;
+    }
+    lua_getfield(co, 1, "tapped");
+    luaL_checktype(co, -1, LUA_TFUNCTION);
+    if (key_tapped != LUA_NOREF) luaL_unref(co, LUA_REGISTRYINDEX, key_tapped);
+    key_tapped = luaL_ref(co, LUA_REGISTRYINDEX);
+    if (key_label != LUA_NOREF) luaL_unref(co, LUA_REGISTRYINDEX, key_label);
+    key_label = LUA_NOREF;
+    lua_getfield(co, 1, "label");
+    if (lua_isfunction(co, -1)) key_label = luaL_ref(co, LUA_REGISTRYINDEX);
+    else {
+        *key_text = luaL_checkstring(co, -1);
+        lua_pop(co, 1);
+    }
+    lua_pushboolean(co, 1);
+    return 1;
+}
+
 /* ---- the rest ---- */
 
 typedef void (*Toast)(MainWindowController *window, const QString &title, const QString &text, int ms);
@@ -1198,4 +1397,7 @@ void kit_open_ui(lua_State *L) {
     lua_setfield(L, -2, "tab");
     lua_pushcfunction(L, l_toast);
     lua_setfield(L, -2, "toast");
+    static const luaL_Reg keyboard[] = {{"choose", l_keyboard_choose}, {"reload", l_keyboard_reload}, {"key", l_keyboard_key}, {0, 0}};
+    luaL_newlib(L, keyboard);
+    lua_setfield(L, -2, "keyboard");
 }

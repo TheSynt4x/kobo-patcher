@@ -132,6 +132,32 @@ static void resume(lua_State *co, int args) {
     luaL_unref(L, LUA_REGISTRYINDEX, tasks->take(co));
 }
 
+QByteArray kit_ask(int fn, void (*push)(lua_State *, void *), void *arg) {
+    lua_State *co = task(fn);
+    int args = lua_gettop(co) - 1;
+    if (push) push(co, arg);
+    args = lua_gettop(co) - 1;
+    lua_State *outer = running;
+    running = co;
+    int results = 0;
+    int status = lua_resume(co, outer, args, &results);
+    running = outer;
+    QByteArray answer;
+    if (status == LUA_YIELD) {
+        /* It goes on by itself; there's no answer now. */
+        lua_pop(co, results);
+        nk_log("a function that had to answer straight away waited instead");
+        return answer;
+    }
+    if (status != LUA_OK) report(co);
+    else {
+        if (results > 0 && lua_type(co, -results) == LUA_TSTRING) answer = lua_tostring(co, -results);
+        lua_pop(co, results);
+    }
+    luaL_unref(L, LUA_REGISTRYINDEX, tasks->take(co));
+    return answer;
+}
+
 /* For functions that wait: they need a coroutine the kit can resume. */
 static void must_wait_here(lua_State *co) {
     if (!tasks->contains(co) || !lua_isyieldable(co)) luaL_error(co, "this can only wait in a callback");

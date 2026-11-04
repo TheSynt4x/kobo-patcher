@@ -2,6 +2,8 @@
 #ifndef NK_LUA_KIT_H
 #define NK_LUA_KIT_H
 
+#include <QByteArray>
+
 extern "C" {
 #include "vendor/lua/lua.h"
 #include "vendor/lua/lauxlib.h"
@@ -55,6 +57,10 @@ void kit_build_page(PagingContainer *paging, int build, bool tab);
 /* Before a place opens: false, with the error shown, if the mod couldn't start. In development it
  * runs main.lua again first if a script has changed. */
 bool kit_ready_to_open();
+/* Runs the function the reference fn holds straight away, with the arguments push(co, arg) pushes,
+ * and returns its first result if it's a string. For callbacks Kobo needs an answer from, so it
+ * can't wait: if it does, the answer is empty and it carries on by itself. */
+QByteArray kit_ask(int fn, void (*push)(lua_State *co, void *arg), void *arg);
 /* One of the mod's own files, built into the .so: a script, or icons/<name>.png. */
 bool kit_embedded(const char *name, const unsigned char **data, unsigned *size);
 /* Opens a settings-style screen built by the function at build_index, kept until it has gone. */
