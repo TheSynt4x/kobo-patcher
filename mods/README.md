@@ -1,7 +1,7 @@
 # Mods
 
 Mods add to Kobo's UI using Kobo's own widgets, so a new row or screen looks like it was always there.
-A mod is Lua scripts on top of `kit/`, and the kit's Lua API is what's documented and kept working. `example/` is a Lua mod that shows what the kit can do, with notes. The kit is C++, built against Qt 5.2.1's headers, the Qt that Nickel runs, and uses Nickel's own Qt when it runs. There's no Qt to install: the build fetches the headers. The kit's own C layer, `kit/nk.h`, is internal: C++ mods can use it, but it may change in any release.
+A mod is Lua scripts on top of `kit/`, and the kit's Lua API is what's documented and kept working. Every call is in [LUA.md](LUA.md), with the rules a mod keeps to and what has been tried. `example/` is a Lua mod that shows what the kit can do, with notes. The kit is C++, built against Qt 5.2.1's headers, the Qt that Nickel runs, and uses Nickel's own Qt when it runs. There's no Qt to install: the build fetches the headers. The kit's own C layer, `kit/nk.h`, is internal: C++ mods can use it, but it may change in any release.
 
 ```lua
 -- main.lua: a row in Kobo's Settings, opening a screen of Kobo's own rows.
