@@ -668,7 +668,8 @@ static QObject *hooked_create_keyboard(void *frame, int script, const QLocale &l
 /* The kit's own keyboards are made as Kobo's are, through a mod's nk.keyboard.choose if there is one. */
 static QObject *make_keyboard(void *frame, int script) {
     if (real_create_keyboard) return hooked_create_keyboard(frame, script, QLocale());
-    CreateKeyboard create = reinterpret_cast<CreateKeyboard>(nickel("_ZN13KeyboardFrame14createKeyboardE14KeyboardScriptRK7QLocale"));
+    /* Through libnickel's GOT, so another mod's nk.keyboard.choose applies to these too. */
+    CreateKeyboard create = reinterpret_cast<CreateKeyboard>(kit_got("_ZN13KeyboardFrame14createKeyboardE14KeyboardScriptRK7QLocale"));
     return create ? create(frame, script, QLocale()) : 0;
 }
 typedef QWidget *(*KeyboardFrameOf)(void *dialog);
@@ -1253,6 +1254,8 @@ static void place_key(QWidget *frame) {
     int width = next ? next->width() : 0, gap = next ? next->geometry().x() - at.right() - 1 : 0;
     if (width <= 0 || at.width() < 2 * width + gap) return;
     QByteArray text = key_label != LUA_NOREF ? kit_ask(key_label, push_language, 0) : *key_text;
+    /* An empty label is how a mod says there's no key on this keyboard. */
+    if (text.isEmpty()) return;
     QLabel *key = touch_label(row);
     key->setObjectName(QStringLiteral("nkKey"));
     key->setAlignment(Qt::AlignCenter);
@@ -1342,7 +1345,8 @@ static int l_keyboard_reload(lua_State *) {
 
 /* nk.keyboard.key{label = , tapped = }: a key of the mod's own on every keyboard Kobo makes, left of
  * the space bar, which gets narrower. label is its text, or a function(language) returning it, given
- * the language choose picked for this keyboard or "". tapped() runs when it's tapped. Returns false
+ * the language choose picked for this keyboard or "", and an empty label leaves the key off that
+ * keyboard. tapped() runs when it's tapped. Returns false
  * if this firmware's keyboard isn't as expected. Calling it again replaces the key. */
 static int l_keyboard_key(lua_State *co) {
     luaL_checktype(co, 1, LUA_TTABLE);

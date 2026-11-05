@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialog>
+#include <QGridLayout>
 #include <QHash>
 #include <QFontMetrics>
 #include <QLabel>
@@ -218,7 +219,7 @@ void nk_connect(void *sender, const char *signal, const char *meta, NkFn fn, voi
  * redirects the call without touching any code. */
 struct Hook {
     const char *symbol;
-    void *replacement, *original;
+    void *replacement, *original; /* no replacement: only read what's there */
 };
 
 static int hook_library(struct dl_phdr_info *info, size_t, void *data) {
@@ -245,17 +246,25 @@ static int hook_library(struct dl_phdr_info *info, size_t, void *data) {
         if (strcmp(strings + sym->st_name, hook->symbol)) continue;
         void **slot = reinterpret_cast<void **>(info->dlpi_addr + rel[i].r_offset);
         uintptr_t page = reinterpret_cast<uintptr_t>(slot) & ~uintptr_t(0xfff);
-        if (mprotect(reinterpret_cast<void *>(page), 0x1000, PROT_READ | PROT_WRITE)) return 1;
+        if (hook->replacement && mprotect(reinterpret_cast<void *>(page), 0x1000, PROT_READ | PROT_WRITE)) return 1;
         /* Another mod may have hooked it already, so its replacement is called next and both run.
          * Otherwise the slot holds Nickel's own address, or the stub that looks it up. */
         void *current = *slot;
         Dl_info where;
         bool nickels = dladdr(current, &where) && where.dli_fname && strstr(where.dli_fname, "libnickel.so");
         hook->original = nickels || !current ? dlsym(RTLD_DEFAULT, hook->symbol) : current;
-        *slot = hook->replacement;
+        if (hook->replacement) *slot = hook->replacement;
         return 1;
     }
     return 1;
+}
+
+/* What libnickel's own calls to symbol reach now: another mod's hook, if one has taken it, or
+ * Nickel's function. For calling it the way Nickel does, so every mod's hook on it runs. */
+void *kit_got(const char *symbol) {
+    Hook hook = {symbol, 0, 0};
+    dl_iterate_phdr(hook_library, &hook);
+    return hook.original ? hook.original : dlsym(RTLD_DEFAULT, symbol);
 }
 
 void *nk_hook(const char *symbol, void *replacement) {
@@ -651,6 +660,50 @@ NkLabel *nk_button_row(NkScreen *s, const char *title, const char *button, NkFn 
     r.box->addWidget(action, 0, 0);
     add(s, r.row);
     return reinterpret_cast<NkLabel *>(r.name);
+}
+
+
+/* ---- blocks on Kobo's own screens, for nk.on_screen ---- */
+
+/* At the end of a Kobo widget's layout: a new row of a grid, across it, or before a box's closing
+ * stretch, so it sits under what's there. False if it has neither. */
+static bool append_to(QWidget *into, QWidget *block) {
+    QLayout *layout = into->layout();
+    if (QGridLayout *grid = qobject_cast<QGridLayout *>(layout)) {
+        grid->addWidget(block, grid->rowCount(), 0, 1, qMax(1, grid->columnCount()));
+    } else if (QBoxLayout *box = qobject_cast<QBoxLayout *>(layout)) {
+        int at = box->count();
+        if (at > 0 && box->itemAt(at - 1)->spacerItem()) at--;
+        box->insertWidget(at, block);
+    } else {
+        return false;
+    }
+    block->show();
+    return true;
+}
+
+QLabel *kit_append_section(QWidget *into, const char *title) {
+    learn_labels();
+    QLabel *heading = label(into, screen.vptrs[LABEL_SECTION], title);
+    if (append_to(into, heading)) return heading;
+    delete heading;
+    return 0;
+}
+
+QLabel *kit_append_button_row(QWidget *into, const char *title, const char *button, NkFn tapped, void *arg) {
+    learn_labels();
+    SettingContainer *row = new (alloc(0x6c)) SettingContainer(into);
+    QHBoxLayout *box = new (alloc(0x10)) QHBoxLayout(row);
+    QLabel *name = label(0, screen.vptrs[LABEL_ROW], title);
+    name->setWordWrap(true);
+    box->addWidget(name, 1, 0);
+    N3ButtonLabel *action = new (alloc(0x98)) N3ButtonLabel(0);
+    action->setText(qstr(button));
+    connect_to(action, "_ZN10TouchLabel6tappedEb", "_ZN10TouchLabel16staticMetaObjectE", tapped, arg);
+    box->addWidget(action, 0, 0);
+    if (append_to(into, row)) return name;
+    delete row;
+    return 0;
 }
 
 void nk_label_set(NkLabel *line, const char *text) { reinterpret_cast<QLabel *>(line)->setText(qstr(text)); }

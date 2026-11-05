@@ -3,6 +3,7 @@
 #define NK_KIT_H
 
 #include <QWidget>
+class QLabel;
 #include "nk.h"
 
 class PagingContainer : public QWidget {
@@ -29,6 +30,12 @@ const char *kit_top_screen_title(void);
 /* Close the screen opened last and open it again, built afresh. */
 void kit_reopen_screen(void);
 
+/* What libnickel's own calls to symbol reach now, another mod's hook or Nickel's function. */
+void *kit_got(const char *symbol);
+/* nk.on_screen's blocks: Kobo's grey section heading, and a row with a title and a button, at the
+ * end of one of Kobo's own widgets' layouts. 0 if it has none. */
+QLabel *kit_append_section(QWidget *into, const char *title);
+QLabel *kit_append_button_row(QWidget *into, const char *title, const char *button, NkFn tapped, void *arg);
 /* A row beside one of Kobo's own on More or in Settings, by that row's object name, after it or
  * before it; with no name, in the usual place. Titles are copied. */
 void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, NkFn open, void *arg);

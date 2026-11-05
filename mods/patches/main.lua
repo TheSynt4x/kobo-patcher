@@ -3,9 +3,10 @@
 -- one arrives without reinstalling the mod, and it's read again whenever it changes. Choices are
 -- saved on the Kobo and made again each time Nickel starts, before it has built anything.
 --
--- And "KOReader" on the More page, when KOReader is in .adds.
+-- And "KOReader" on the More page, when KOReader is in .adds, and the languages in languages.lua.
 local list = require "list"
 local update = require "update"
+local languages = require "languages"
 
 local CHOICES = "choices.txt"
 local KOREADER = "/mnt/onboard/.adds/koreader/koreader.sh"
@@ -212,6 +213,9 @@ if not state.started then
   load_list()
 end
 nk.settings{name = "Kobo Patcher", build = build}
+
+-- Keyboards in your languages and a filter for them in My Books.
+languages.start()
 
 -- KOReader's own launcher stops Nickel, and starts it again when KOReader quits.
 if nk.file.exists(KOREADER) then

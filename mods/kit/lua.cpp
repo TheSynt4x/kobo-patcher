@@ -746,6 +746,52 @@ static int widget_show(lua_State *co) {
     return 0;
 }
 
+/* widget:top(): the screen it's on, to find something around it, such as the screen's title: the
+ * nearest of Kobo's screens (an N3Dialog) it's inside, or else the top of its widgets. Only once
+ * Kobo has put it on its screen: from nk.after, say, not straight from nk.on_screen. */
+static int widget_top(lua_State *co) {
+    QWidget *widget = qobject_cast<QWidget *>(check_handle(co, "nk.widget"));
+    QWidget *top = widget ? widget->window() : 0;
+    for (QWidget *w = widget; w; w = w->parentWidget())
+        if (w->inherits("N3Dialog")) {
+            top = w;
+            break;
+        }
+    if (!top) return 0;
+    push_handle(co, top, "nk.widget");
+    return 1;
+}
+
+/* widget:add_section(title): Kobo's grey section heading, at the end of this widget's layout.
+ * Returns it as a label, or nil if the widget has no layout. */
+static int widget_add_section(lua_State *co) {
+    QWidget *widget = qobject_cast<QWidget *>(check_handle(co, "nk.widget"));
+    QLabel *heading = widget ? kit_append_section(widget, luaL_checkstring(co, 2)) : 0;
+    if (!heading) return 0;
+    push_handle(co, heading, "nk.label");
+    return 1;
+}
+
+/* widget:add_button(title, button, tapped): a row with a title and Kobo's button, like Language and
+ * dictionaries' Edit, at the end of this widget's layout. tapped() runs when the button is tapped.
+ * Returns the title as a label, or nil if the widget has no layout. */
+static int widget_add_button(lua_State *co) {
+    QWidget *widget = qobject_cast<QWidget *>(check_handle(co, "nk.widget"));
+    const char *title = luaL_checkstring(co, 2), *button = luaL_checkstring(co, 3);
+    luaL_checktype(co, 4, LUA_TFUNCTION);
+    if (!widget) return 0;
+    Hook *hook = new_hook(co, 4);
+    QLabel *name = kit_append_button_row(widget, title, button, tapped, hook);
+    if (!name) {
+        luaL_unref(co, LUA_REGISTRYINDEX, hook->fn);
+        delete hook;
+        return 0;
+    }
+    hook_to(hook, name);
+    push_handle(co, name, "nk.label");
+    return 1;
+}
+
 /* widget:class(): Kobo's name for its class, such as "MoreView". */
 static int widget_class(lua_State *co) {
     lua_pushstring(co, check_handle(co, "nk.widget")->metaObject()->className());
@@ -1023,7 +1069,7 @@ extern "C" void nk_mod_init(void) {
     add_type("nk.page", page_methods, page_gc);
     add_type("nk.toggle", toggle_methods, handle_gc);
     add_type("nk.label", label_methods, handle_gc);
-    static const luaL_Reg widget_methods[] = {{"find", widget_find}, {"text", widget_text}, {"set", widget_set}, {"show", widget_show}, {"class", widget_class}, {0, 0}};
+    static const luaL_Reg widget_methods[] = {{"find", widget_find}, {"text", widget_text}, {"set", widget_set}, {"show", widget_show}, {"class", widget_class}, {"top", widget_top}, {"add_section", widget_add_section}, {"add_button", widget_add_button}, {0, 0}};
     add_type("nk.widget", widget_methods, handle_gc);
     add_type("nk.timer", timer_methods, 0);
 
