@@ -505,6 +505,9 @@ test("a dictionary is checked, named for its language, and copied to custom-dict
   const dictionary = await readDictionary(good);
   assert.deepEqual([dictionary.name, dictionary.language], ["dicthtml-ru.zip", "ru"]);
   assert.equal((await readDictionary(zip("dicthtml-ru-en.zip", [{ name: "words", data: page }, { name: "ab.html", data: page }]))).language, "ru-en");
+  // reader.dict names its own with the language twice, and it's saved as Kobo names its own.
+  const twice = await readDictionary(zip("dicthtml-de-de.zip", [{ name: "words", data: page }, { name: "ab.html", data: page }]));
+  assert.deepEqual([twice.name, twice.language], ["dicthtml-de.zip", "de"]);
 
   await assert.rejects(readDictionary(zip("russian.zip", [{ name: "words", data: page }])), /isn't named like a Kobo dictionary/);
   await assert.rejects(readDictionary(zip("dicthtml-sv.zip", [{ name: "readme.txt", data: page }])), /isn't a Kobo dictionary/);

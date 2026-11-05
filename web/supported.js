@@ -1,9 +1,9 @@
 // What the patcher accepts. The page refuses anything not listed here, and its
 // "supported versions" window is built from this file. Firmware and compiled patches
 // come from patches.yaml, through `make patches`.
-import { COMPILED_PATCHES, FIRMWARE, PATCH_CATEGORIES } from "./patches/compiled.js";
+import { ALL_SWITCH, COMPILED_PATCHES, FIRMWARE, PATCH_CATEGORIES } from "./patches/compiled.js";
 
-export { FIRMWARE };
+export { ALL_SWITCH, FIRMWARE };
 
 // The page's sections, in order. Patch categories are set in patches.yaml.
 export const CATEGORIES = ["Mods", ...PATCH_CATEGORIES, "Add-ons"];
@@ -96,3 +96,11 @@ export const REGISTRY = [
 export function registryFor(model, firmware) {
   return REGISTRY.filter((item) => item.targets[model]?.includes(firmware));
 }
+
+// Dictionaries the page links to, for languages Kobo has none for: reader.dict's, made from
+// Wiktionary, at FILE with the language twice. Only the languages it has a Kobo file for.
+export const DICTIONARIES = {
+  file: (language) => `https://www.reader-dict.com/file/${language}/dicthtml-${language}-${language}.zip`,
+  languages: ["bg", "ca", "cs", "da", "de", "el", "en", "eo", "es", "fi", "fr", "it", "ja", "jbo", "ko", "lt", "nl", "pl",
+    "pt", "ro", "ru", "sv", "th", "tr", "uk", "zh"],
+};

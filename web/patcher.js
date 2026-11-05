@@ -207,20 +207,22 @@ export async function readKOReader(file) {
 }
 
 // A dictionary in Kobo's own format: a zip of its word list and pages, named for its language,
-// such as dicthtml-ru.zip, or dicthtml-ru-en.zip for one between two. Kobo finds those in
+// such as dicthtml-de.zip, or dicthtml-de-en.zip for one between two. Kobo finds those in
 // .kobo/custom-dict by name and shows them as "(Custom)", apart from the ones Kobo downloads.
+// One named with the same language twice, as reader.dict's are, is saved as Kobo names its own.
 const DICTIONARY_NAME = /^dicthtml-([a-z]{2,3}(?:-[a-z]{2,3})?)\.zip$/i;
 
 export async function readDictionary(file) {
   const match = DICTIONARY_NAME.exec(file.name);
   if (!match) {
-    throw new Refused(`"${file.name}" isn't named like a Kobo dictionary, dicthtml- then its language, such as dicthtml-ru.zip`);
+    throw new Refused(`"${file.name}" isn't named like a Kobo dictionary: dicthtml-, then its language code, then .zip`);
   }
   const names = (await zipEntries(file)).map((entry) => entry.name);
   if (!names.includes("words") || !names.some((name) => name.endsWith(".html"))) {
     throw new Refused(`"${file.name}" isn't a Kobo dictionary: it has no word list and pages`);
   }
-  const language = match[1].toLowerCase();
+  const [from, to] = match[1].toLowerCase().split("-");
+  const language = to && to !== from ? `${from}-${to}` : from;
   return { name: `dicthtml-${language}.zip`, language, file };
 }
 

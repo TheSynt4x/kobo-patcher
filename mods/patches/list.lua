@@ -35,7 +35,7 @@ local function has_flag(flags, flag)
 end
 
 -- Reads a list's text. Returns {model, version, name, patches}, or nil and why. Each patch is {id,
--- title, category, group, warning, restart, cached, edits}, and its edits are what nk.patch takes.
+-- title, category, group, warning, restart, cached, all, edits}, and its edits are what nk.patch takes.
 function list.parse(text)
   if #text > MAX_BYTES then return nil, "the patch list is too big" end
   if text == "" then return nil, "it's empty" end
@@ -64,6 +64,7 @@ function list.parse(text)
         warning = fields[7] ~= "" and fields[7] or nil,
         restart = has_flag(fields[5], "restart"), -- only takes effect once Nickel restarts
         cached = has_flag(fields[5], "cached"), -- changes code Nickel runs once
+        all = has_flag(fields[5], "all"), -- switched too by "All <category>"
         edits = {},
       }
       firmware.patches[#firmware.patches + 1] = patch

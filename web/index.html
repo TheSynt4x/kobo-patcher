@@ -87,6 +87,25 @@
     margin-left: 4px; padding: 1px 6px; font-size: 12px; font-style: normal; font-weight: 600;
     color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; vertical-align: 1px;
   }
+  .dictionaries { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .dictionaries h3 { margin: 0 0 4px; font-size: 15px; }
+  .dictionaries h3 span { margin-left: 4px; color: var(--muted); font-size: 14px; font-weight: 400; }
+  .dictionaries p { color: var(--muted); font-size: 14px; line-height: 1.4; }
+  .dictionaries code { font-size: 13px; }
+  .dictionaries .get { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 6px; }
+  .dictionaries select {
+    flex: 1 1 180px; min-width: 0; padding: 8px 10px; font: inherit; color: var(--text);
+    background: var(--card); border: 1px solid var(--muted); border-radius: 7px;
+  }
+  .dictionaries .source { margin-bottom: 12px; font-size: 13px; }
+  .dictionaries .source a { color: var(--accent); }
+  .button {
+    display: inline-block; padding: 9px 16px; font-weight: 600; text-decoration: none;
+    color: var(--text); border: 1px solid var(--muted); border-radius: 7px;
+  }
+  .button:hover, button:not(:disabled):hover { border-color: var(--accent); }
+  .drop.small { padding: 18px 16px; font-size: 15px; }
+  .drop:has(input:disabled) { cursor: not-allowed; }
   .fine { margin-top: 20px; color: var(--muted); font-size: 14px; }
   .fine a { color: inherit; }
 </style>
@@ -113,15 +132,23 @@
   <section id="step-patches" class="locked">
     <h2><span>2</span>Patches</h2>
     <div id="patches"></div>
-    <details class="dictionaries" id="dictionaries">
-      <summary>Add dictionaries (optional)</summary>
-      <p>For languages Kobo has no dictionary of its own for, such as Russian. Choose dictionaries in Kobo's format
-        that you've downloaded, named <code>dicthtml-</code> and the language, such as <code>dicthtml-ru.zip</code>.
-        They go in the Kobo's <code>.kobo/custom-dict</code> folder and show in its dictionary settings as Custom.
-        Kobo's own dictionaries are downloaded from its Settings instead.</p>
-      <input type="file" id="dictionary-files" accept=".zip" multiple disabled aria-label="Dictionary files">
+    <div class="dictionaries" id="dictionaries">
+      <h3>Dictionaries <span>optional</span></h3>
+      <p>For a language Kobo has no dictionary for. Download one, then choose it below. It goes in
+        <code>.kobo/custom-dict</code>, and shows as Custom in the Kobo's dictionary settings.</p>
+      <div class="get">
+        <select id="dictionary-language" aria-label="Dictionary language"></select>
+        <a class="button" id="dictionary-download" rel="noopener">Download</a>
+      </div>
+      <p class="source">Free dictionaries made from Wiktionary by <a href="https://www.reader-dict.com" rel="noopener">reader.dict</a>.
+        Any other in Kobo's format works too.</p>
+      <label class="drop small" id="dictionary-drop">
+        <input type="file" id="dictionary-files" accept=".zip" multiple disabled aria-label="Dictionary files">
+        Drop dictionaries here, or click to choose them
+        <small>Zip files named dicthtml- and a language code. Kobo's own dictionaries come from its Settings instead.</small>
+      </label>
       <p class="status" id="dictionary-status" role="status"></p>
-    </details>
+    </div>
   </section>
 
   <section id="step-firmware" class="locked">

@@ -10,7 +10,8 @@ One line each, fields separated by tabs, so the mod can read it without a JSON p
 
 Edits belong to the patch before them. Flags are separated by commas: "restart" for a patch that
 only takes effect after Nickel restarts, set in patches.yaml, and "cached" for one that changes code
-Nickel runs once and keeps the result of, which make patches finds. Patches are in the page's order:
+Nickel runs once and keeps the result of, which make patches finds, and "all" for one in a category
+with an "All <category>" switch, set by all_switch in patches.yaml. Patches are in the page's order:
 by category, then as patches.yaml lists them.
 """
 import json
@@ -30,7 +31,7 @@ def field(text):
     return text
 
 
-def list_for(firmware, patches):
+def list_for(firmware, patches, all_switch):
     name = f"{firmware['model']}-{firmware['firmware']}"
     edits_by_id = json.loads((ROOT / "web/patches" / f"{name}.json").read_text())
     cached = set(json.loads((ROOT / "web/patches" / f"{name}.cached.json").read_text()))
@@ -39,7 +40,8 @@ def list_for(firmware, patches):
         edits = edits_by_id.get(patch["id"])
         if not edits:
             continue
-        flags = ",".join(flag for flag, on in (("restart", patch.get("restart")), ("cached", patch["id"] in cached)) if on) or "-"
+        flags = ",".join(flag for flag, on in (("restart", patch.get("restart")), ("cached", patch["id"] in cached),
+                                               ("all", patch["category"] in all_switch)) if on) or "-"
         lines.append("\t".join(["patch", field(patch["id"]), field(patch["category"].upper()), field(patch.get("group") or "-"),
                                 flags, field(patch["title"]), field(patch.get("warning") or "")]))
         for edit in edits:
@@ -54,7 +56,7 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     for firmware in source["firmware"]:
         path = OUT / f"{firmware['model']}-{firmware['firmware']}.txt"
-        path.write_text(list_for(firmware, patches))
+        path.write_text(list_for(firmware, patches, source.get("all_switch", [])))
         print(f"wrote {path.relative_to(ROOT)}")
 
 

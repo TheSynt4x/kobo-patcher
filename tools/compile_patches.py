@@ -167,6 +167,28 @@ def blx_target(binary, at):
     return (pc & ~3) + delta  # BLX switches to ARM, aligned
 
 
+def thumb_bl(binary, at, name):
+    """A 32-bit Thumb BL at this offset to the function with this name in the same file."""
+    delta = binary.to_address(binary.symbol(name)) - (binary.to_address(at) + 4)
+    if not -(1 << 24) <= delta < 1 << 24:
+        raise Misfit(f"{name} is too far away for a BL")
+    sign, i1, i2 = (delta >> 24) & 1, (delta >> 23) & 1, (delta >> 22) & 1
+    j1, j2 = (i1 ^ 1) ^ sign, (i2 ^ 1) ^ sign
+    upper = 0xF000 | sign << 10 | (delta >> 12) & 0x3FF
+    lower = 0xD000 | j1 << 13 | j2 << 11 | (delta >> 1) & 0x7FF
+    return struct.pack("<HH", upper, lower)
+
+
+def replacement(binary, at, value):
+    """ReplaceH's bytes: hex, where BL{name} is a Thumb BL from that place to the function name."""
+    if not isinstance(value, str):
+        return hexbytes(value)
+    out = b""
+    for i, part in enumerate(re.split(r"BL\{([^}]*)\}", value)):
+        out += thumb_bl(binary, at + len(out), part) if i % 2 else hexbytes(part)
+    return out
+
+
 def base_address(binary, value):
     if isinstance(value, int):
         return value
@@ -192,7 +214,7 @@ def patch_bytes(binary, base, spec, edits):
     if spec.get("ReplaceInstNOP"):
         replace = NOP * (len(find) // 2)
     else:
-        replace = hexbytes(spec["ReplaceH"])
+        replace = replacement(binary, at, spec["ReplaceH"])
     if len(replace) != len(find):
         raise Misfit("replacement isn't the same length")
     edits.append((at, find, replace))
@@ -350,6 +372,9 @@ def main():
             raise SystemExit(f"{patch['id']}: category has to be one of {', '.join(spec['categories'])}")
         if patch.get("restart", False) not in (True, False):
             raise SystemExit(f"{patch['id']}: restart has to be yes or no")
+    for category in spec.get("all_switch", []):
+        if category not in spec["categories"]:
+            raise SystemExit(f"all_switch: {category} isn't one of the categories")
     folder = community_folder(spec["community_patches"]["ref"], spec["community_patches"]["version"])
     sources = {name: load_patches(folder, name) for name in FILES}
     out = REPO / "web/patches"
@@ -399,6 +424,7 @@ def main():
         "// Written by tools/compile_patches.py from patches.yaml. Run `make patches` to change it.\n"
         f"export const FIRMWARE = {json.dumps(firmware_list, indent=2)};\n\n"
         f"export const PATCH_CATEGORIES = {json.dumps(spec['categories'], indent=2)};\n\n"
+        f"export const ALL_SWITCH = {json.dumps(spec.get('all_switch', []))};\n\n"
         f"export const COMPILED_PATCHES = {json.dumps(offered, indent=2)};\n"
     )
 

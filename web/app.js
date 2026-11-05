@@ -3,7 +3,7 @@ import {
   readDictionary, readKOReader, sha256, writeToKobo,
 } from "./patcher.js";
 import {
-  CATEGORIES, FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, firmwareRequestUrl, firmwareSearchUrl, registryFor,
+  ALL_SWITCH, CATEGORIES, DICTIONARIES, FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, firmwareRequestUrl, firmwareSearchUrl, registryFor,
 } from "./supported.js";
 
 const ADDON_FILES = {
@@ -133,6 +133,7 @@ function render() {
   $("firmware").disabled = state.busy || !state.kobo;
   $("dictionary-files").disabled = state.busy || !state.kobo;
   for (const box of document.querySelectorAll("#patches input")) box.disabled = state.busy;
+  showAllSwitches();
   if ($("via-kobopatcher")) $("via-kobopatcher").hidden = !viaKoboPatcher();
   // KOReader starts from the row Kobo Patcher adds to More, so adding it brings Kobo Patcher along.
   const addingKOReader = !!$("addon-koreader") && checked("koreader") && !isInstalled("koreader");
@@ -211,14 +212,45 @@ function element(tag, props = {}, ...children) {
   return node;
 }
 
+// Ticking a patch unticks the others in its group.
+function tick(item, on) {
+  $(`patch-${item.id}`).checked = on;
+  if (!on || !item.group) return;
+  for (const other of offered("patch")) {
+    if (other.group === item.group && other.id !== item.id) $(`patch-${other.id}`).checked = false;
+  }
+}
+
+// "All <category>" is ticked when every patch in it is, and half ticked when some are.
+function showAllSwitches() {
+  for (const category of ALL_SWITCH) {
+    const box = $(`all-${slug(category)}`);
+    if (!box) continue;
+    const on = state.items.filter((item) => item.category === category).map((item) => checked(item.id));
+    box.checked = on.every(Boolean);
+    box.indeterminate = !box.checked && on.some(Boolean);
+  }
+}
+
+function allRow(category, items) {
+  const box = element("input", { type: "checkbox", id: `all-${slug(category)}` });
+  box.addEventListener("change", () => {
+    for (const item of items) tick(item, box.checked);
+    render();
+  });
+  const text = element("span", {}, element("strong", { textContent: `All ${category.toLowerCase()}` }),
+    element("small", { textContent: "Turns every one below on or off." }));
+  return element("label", { className: "patch" }, box, text);
+}
+
+function slug(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
 function patchRow(item, isChecked) {
   const box = element("input", { type: "checkbox", id: `patch-${item.id}`, checked: isChecked });
   box.addEventListener("change", () => {
-    if (box.checked && item.group) {
-      for (const other of offered("patch")) {
-        if (other.group === item.group && other.id !== item.id) $(`patch-${other.id}`).checked = false;
-      }
-    }
+    tick(item, box.checked);
     render();
   });
   const title = element("strong", { textContent: item.title });
@@ -266,6 +298,7 @@ function showPatches() {
   for (const category of CATEGORIES) {
     const items = state.items.filter((item) => item.category === category);
     if (items.length) rows.push(element("h3", { textContent: category }));
+    if (items.length > 1 && ALL_SWITCH.includes(category)) rows.push(allRow(category, items));
     for (const item of items) {
       if (item.kind === "addon") rows.push(patchRow(item, isInstalled(item.id)), addonFile(item));
       else if (item.kind === "mod") rows.push(patchRow(item, !!modInstalled(item.id)));
@@ -276,6 +309,7 @@ function showPatches() {
   if (leftovers.length && !offered("addon").length) rows.push(element("h3", { textContent: "Add-ons" }));
   for (const addon of leftovers) rows.push(patchRow(addon, true));
   $("patches").replaceChildren(...rows);
+  showAllSwitches();
 }
 
 function versionList(items) {
@@ -500,23 +534,27 @@ function undo() {
   }
 }
 
-const drop = $("drop");
-for (const name of ["dragenter", "dragover"]) {
-  drop.addEventListener(name, (event) => {
-    event.preventDefault();
-    drop.classList.add("over");
+// Files dropped on a drop zone go to choose, once a Kobo is selected.
+function dropZone(zone, choose) {
+  for (const name of ["dragenter", "dragover"]) {
+    zone.addEventListener(name, (event) => {
+      event.preventDefault();
+      zone.classList.add("over");
+    });
+  }
+  for (const name of ["dragleave", "drop"]) {
+    zone.addEventListener(name, (event) => {
+      event.preventDefault();
+      zone.classList.remove("over");
+    });
+  }
+  zone.addEventListener("drop", (event) => {
+    const files = [...event.dataTransfer.files];
+    if (files.length && !state.busy && state.kobo) choose(files);
   });
 }
-for (const name of ["dragleave", "drop"]) {
-  drop.addEventListener(name, (event) => {
-    event.preventDefault();
-    drop.classList.remove("over");
-  });
-}
-drop.addEventListener("drop", (event) => {
-  const [file] = event.dataTransfer.files;
-  if (file && !state.busy && state.kobo) chooseFirmware(file);
-});
+dropZone($("drop"), ([file]) => chooseFirmware(file));
+dropZone($("dictionary-drop"), chooseDictionaries);
 $("firmware").addEventListener("change", (event) => {
   const [file] = event.target.files;
   if (file) chooseFirmware(file);
@@ -535,8 +573,7 @@ $("risk-accept").addEventListener("click", () => {
 });
 // Dictionaries need the patch that lets Kobo use one for a language it doesn't list, so choosing
 // one ticks it, where this firmware has it.
-$("dictionary-files").addEventListener("change", async (event) => {
-  const files = [...event.target.files];
+async function chooseDictionaries(files) {
   state.dictionaries = [];
   say("dictionary-status", files.length ? "Checking…" : "");
   await busy(async () => {
@@ -559,7 +596,26 @@ $("dictionary-files").addEventListener("change", async (event) => {
     say("dictionary-status", lines.join(" "), allGood ? "good" : "bad");
   });
   render();
-});
+}
+$("dictionary-files").addEventListener("change", (event) => chooseDictionaries([...event.target.files]));
+
+// The download link follows the language chosen, starting at the browser's own where there's one.
+function showDictionaryLanguages() {
+  const names = new Intl.DisplayNames(["en"], { type: "language" });
+  const languages = DICTIONARIES.languages.map((code) => ({ code, name: names.of(code) ?? code }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const select = $("dictionary-language");
+  select.replaceChildren(...languages.map(({ code, name }) => element("option", { value: code, textContent: name })));
+  const own = navigator.languages.map((tag) => tag.split("-")[0].toLowerCase()).find((code) => DICTIONARIES.languages.includes(code));
+  select.value = own ?? languages[0].code;
+  const link = () => {
+    $("dictionary-download").href = DICTIONARIES.file(select.value);
+    $("dictionary-download").textContent = `Download ${names.of(select.value) ?? select.value}`;
+  };
+  select.addEventListener("change", link);
+  link();
+}
+showDictionaryLanguages();
 $("backup").addEventListener("click", backUpEverything);
 $("patch").addEventListener("click", patch);
 $("undo").addEventListener("click", undo);

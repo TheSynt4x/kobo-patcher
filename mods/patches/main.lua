@@ -119,7 +119,9 @@ local function set_quietly(toggle, on)
   quiet = quiet - 1
 end
 
-local function change(patches, rows, i, on)
+-- Switches one patch, and the others in its group off for one going on. Returns whether it did,
+-- and whether that needs a restart.
+local function switch(patches, rows, i, on)
   local patch, restart = patches[i], false
   if on then
     for k, other in ipairs(patches) do
@@ -137,18 +139,42 @@ local function change(patches, rows, i, on)
   end
   local ok, again = nk.patch.set(patch.edits, on, patch)
   if not ok then
-    set_quietly(rows[i].toggle, not on)
-    return nk.error("Nothing was changed", "This patch's bytes have changed since this page opened. Close it and open it again.")
+    if rows[i].toggle then set_quietly(rows[i].toggle, not on) end
+    return false, restart
   end
   nk.log(patch.id .. ": " .. (on and "on" or "off"))
   rows[i].state = on and "on" or "off"
+  if rows[i].toggle then set_quietly(rows[i].toggle, on) end
   choose(patch, on)
+  return true, restart or again
+end
+
+local function finish(ok, restart)
   save_choices()
   nk.patch.refresh()
-  if (restart or again) and nk.confirm("Restart to finish",
+  if not ok then
+    return nk.error("Not everything was changed", "A patch's bytes have changed since this page opened. Close it and open it again.")
+  end
+  if restart and nk.confirm("Restart to finish",
       "Your Kobo has already used what this patch changes, so it takes effect after a restart.", "Restart", "Later") then
     nk.reboot()
   end
+end
+
+-- The rows of patches with the "all" flag in a category, leaving out the changed ones.
+local function all_rows(patches, rows, category)
+  local found = {}
+  for i, patch in ipairs(patches) do
+    if patch.category == category and patch.all and rows[i].state ~= "changed" then found[#found + 1] = i end
+  end
+  return found
+end
+
+local function all_on(rows, found)
+  for _, i in ipairs(found) do
+    if rows[i].state ~= "on" then return false end
+  end
+  return true
 end
 
 local function build(page)
@@ -184,9 +210,40 @@ local function build(page)
       categories[#categories + 1] = patch.category
     end
   end
+  -- A patch in a group can switch one in another category, so each "All" switch is shown again
+  -- after any change.
+  local alls = {}
+  local function show_alls()
+    for _, show in ipairs(alls) do show() end
+  end
   quiet = quiet + 1
   for _, category in ipairs(categories) do
     page:section(category)
+    -- "All <category>" switches every patch below it, and shows on only when they all are.
+    local found, all = all_rows(patches, rows, category), nil
+    local function show_all() set_quietly(all, all_on(rows, found)) end
+    if #found > 1 then
+      all = page:toggle("All " .. category:lower(), all_on(rows, found), function(on)
+        if quiet > 0 then return end
+        local warnings = {}
+        for _, i in ipairs(found) do
+          if on and rows[i].state ~= "on" and patches[i].warning then warnings[#warnings + 1] = patches[i].warning end
+        end
+        if #warnings > 0 and not nk.confirm(category:sub(1, 1) .. category:sub(2):lower(), table.concat(warnings, "\n\n"), "Turn on", "Cancel") then
+          return show_all()
+        end
+        local ok, restart = true, false
+        for _, i in ipairs(found) do
+          if rows[i].state ~= (on and "on" or "off") then
+            local done, again = switch(patches, rows, i, on)
+            ok, restart = ok and done, restart or again
+          end
+        end
+        show_alls()
+        finish(ok, restart)
+      end)
+      alls[#alls + 1] = show_all
+    end
     for i, patch in ipairs(patches) do
       local row = rows[i]
       -- Bytes that match neither side belong to something else, so they're left alone. Partly on
@@ -199,7 +256,9 @@ local function build(page)
           if on and patch.warning and not nk.confirm(patch.title, patch.warning, "Turn on", "Cancel") then
             return set_quietly(row.toggle, false)
           end
-          change(patches, rows, i, on)
+          local ok, restart = switch(patches, rows, i, on)
+          show_alls()
+          finish(ok, restart)
         end)
       end
     end
