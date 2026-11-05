@@ -1,0 +1,526 @@
+#!/usr/bin/env python3
+"""Drive a real Kobo over Wi-Fi through the devtools mod (mods/devtools). Python 3, nothing else.
+Mods are found in mods/, and in the folders KOBO_MODS lists, separated by colons, first. The Kobo,
+its token and what runs leave go in mods/build, or KOBO_BUILD.
+
+First, over USB:   tools/kobo setup [MOUNT]      installs devtools with a new token, then eject
+Then, on Wi-Fi:    tools/kobo find               finds the Kobo on this network and remembers it
+
+  ping                      is it there
+  shot [FILE]               screenshot, to build/shot.png unless FILE is given
+  tree [--all]              what's on screen: widgets with text, and where they are
+  tap X Y | tap TEXT        tap a place, or the widget showing TEXT (--nth N picks the Nth match)
+  press X Y | press TEXT    long press
+  tick TEXT                 tap the tick box on the same row as TEXT
+  swipe X1 Y1 X2 Y2 [MS]    drag
+  settle                    wait until nothing has been painted for a moment
+  log [-f] [--all]          what mods have written to stderr since the last call (-f keeps going,
+                            across restarts)
+  crash                     the crash reports devtools saved, from Nickel crashing
+  push MOD                  copy MOD's scripts to .adds/MOD/dev on the Kobo and reload them
+  reload MOD                run MOD's main.lua again from its dev folder
+  eval MOD CODE             run Lua inside MOD, and print what it returns
+  undev MOD                 back to the built-in scripts (removes .adds/MOD/dev, then reboots)
+  install MOD [--no-reboot] build MOD, put it on the Kobo, reboot and wait for it
+  reboot                    reboot and wait for it
+  sh COMMAND                run a shell command on the Kobo, as root
+  ls PATH | get PATH [FILE] | put FILE PATH | rm PATH
+  run FILE [--repeat N]     runs a scenario: a tools/kobo command on each line (# starts a
+                            comment), and expect TEXT, expect-not TEXT, wait MS, shot NAME,
+                            tree NAME, and tap TEXT until OTHER, which taps up to three times
+                            until OTHER is on screen. Screenshots, trees and the log go to build/runs/, and it
+                            stops at the first step that fails, with a screenshot of it
+
+Taps, presses and swipes wait to settle before returning. The Kobo and its token are kept in
+build/device. KOBO=host overrides the host.
+
+--emu before the command drives an emulator on this computer instead, through devtools there: one
+that forwards 127.0.0.1:18484 to its port 8484, with its token in build/emulator.
+"""
+import concurrent.futures, json, os, re, secrets, shlex, shutil, socket, subprocess, sys, tarfile, time
+import urllib.error, urllib.parse, urllib.request
+
+MODS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOTS = [os.path.abspath(path) for path in os.environ.get("KOBO_MODS", "").split(":") if path] + [MODS]
+BUILD = os.environ.get("KOBO_BUILD") or os.path.join(MODS, "build")
+DEVICE = os.path.join(BUILD, "device")
+EMULATOR = os.path.join(BUILD, "emulator")
+PORT = 8484
+ONBOARD = "/mnt/onboard"
+
+
+def config():
+    found = {}
+    if os.path.exists(DEVICE):
+        for line in open(DEVICE):
+            if "=" in line:
+                key, value = line.strip().split("=", 1)
+                found[key] = value
+    if os.environ.get("KOBO"):
+        found["host"] = os.environ["KOBO"]
+    return found
+
+
+def save(**changes):
+    found = config()
+    found.update(changes)
+    os.makedirs(BUILD, exist_ok=True)
+    with open(DEVICE, "w") as f:
+        for key, value in found.items():
+            f.write(f"{key}={value}\n")
+
+
+def die(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def call(endpoint, method="GET", body=None, timeout=30, host=None, quiet=False, **query):
+    c = config()
+    host = host or c.get("host")
+    if not host:
+        die("no Kobo yet: run tools/kobo find, or set KOBO=host")
+    if "token" not in c:
+        die("no token: run tools/kobo setup with the Kobo plugged in")
+    url = f"http://{host}:{c.get('port', PORT)}{endpoint}"
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    request = urllib.request.Request(url, data=body, method=method, headers={"X-Token": c["token"]})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as answer:
+            return answer.read(), answer.headers
+    except urllib.error.HTTPError as e:
+        die(e.read().decode(errors="replace").strip() or str(e))
+    except (urllib.error.URLError, OSError) as e:
+        if quiet:
+            raise
+        die(f"can't reach the Kobo at {host}: {getattr(e, 'reason', e)}. Is its Wi-Fi on?")
+
+
+def text(endpoint, **kw):
+    return call(endpoint, **kw)[0].decode(errors="replace")
+
+
+# ---- the screen ----
+
+def widgets():
+    return [json.loads(line) for line in text("/tree").splitlines() if line.strip()]
+
+
+def plain(s):
+    return re.sub(r"<[^>]*>", "", s or "").strip()
+
+
+def find_widget(label, nth=None):
+    """The widget showing label: exact text first, then text containing it as whole words. Later ones are drawn
+    over earlier ones, so the last match is the one a finger would hit."""
+    want = label.lower()
+    found = [w for w in widgets() if w["w"] > 0 and w["h"] > 0]
+    exact = [w for w in found if plain(w.get("text")).lower() == want]
+    # Then whole words, so "OK" never matches the inside of "BOOKS".
+    words = re.compile(r"(?<!\w)" + re.escape(want) + r"(?!\w)")
+    matches = exact or [w for w in found if words.search(plain(w.get("text")).lower())] or \
+        [w for w in found if w.get("name", "").lower() == want]
+    if not matches:
+        die(f"nothing on screen says {label!r}; tools/kobo tree shows what does")
+    if nth is not None:
+        if nth >= len(matches):
+            die(f"only {len(matches)} widgets say {label!r}")
+        return matches[nth]
+    if len(matches) > 1:
+        print(f"{len(matches)} widgets say {label!r}, tapping the last; --nth N picks another:", file=sys.stderr)
+        for i, w in enumerate(matches):
+            print(f"  {i}: {describe(w)}", file=sys.stderr)
+    return matches[-1]
+
+
+def describe(w):
+    label = plain(w.get("text"))
+    name = f" #{w['name']}" if w.get("name") else ""
+    shown = f' "{label}"' if label else ""
+    ticked = {True: " [x]", False: " [ ]"}.get(w.get("checked"), "")
+    return f"{w['class']}{name}{shown}{ticked} at {w['x']},{w['y']} {w['w']}x{w['h']}"
+
+
+def target(args):
+    """X Y, or a label (with --nth N), as the middle of what's to be touched."""
+    nth = None
+    if "--nth" in args:
+        i = args.index("--nth")
+        nth = int(args[i + 1])
+        args = args[:i] + args[i + 2:]
+    if len(args) >= 2 and all(re.fullmatch(r"\d+", a) for a in args[:2]):
+        return int(args[0]), int(args[1])
+    if not args:
+        die("needs X Y or a label")
+    w = find_widget(" ".join(args), nth)
+    print("tapping", describe(w))
+    return w["x"] + w["w"] // 2, w["y"] + w["h"] // 2
+
+
+def tick_box(label):
+    """The tick box on the row showing label: the one level with it, nearest it."""
+    row = find_widget(label)
+    middle = row["y"] + row["h"] / 2
+    boxes = [w for w in widgets() if "CheckBox" in w["class"] and w["w"] > 0 and w["y"] <= middle <= w["y"] + w["h"] + 20]
+    if not boxes:
+        die(f"no tick box on the row {label!r}")
+    box = min(boxes, key=lambda w: abs(w["y"] + w["h"] / 2 - middle))
+    print("ticking", describe(box))
+    return box["x"] + box["w"] // 2, box["y"] + box["h"] // 2
+
+
+def settle():
+    print(text("/settle", quiet=400, timeout=8000).strip())
+
+
+def show_tree(everything):
+    for w in widgets():
+        if everything or w.get("text") or w.get("window"):
+            print("  " * w["depth"] + describe(w))
+
+
+# ---- files ----
+
+def put(data, remote):
+    call("/file", "PUT", data, path=remote)
+
+
+def mod_folder(mod):
+    """A mod is a folder in KOBO_MODS's folders or in mods/: the folder, the build script that
+    builds it, and where that writes the .so. A folder without its own build.sh builds with this
+    one's, as mods elsewhere do."""
+    for root in ROOTS:
+        if os.path.isdir(os.path.join(root, mod)):
+            script = os.path.join(root, "build.sh")
+            if not os.path.isfile(script):
+                script = os.path.join(MODS, "build.sh")
+            return os.path.join(root, mod), script, os.path.join(root, "build", f"lib{mod}.so")
+    die(f"no mod {mod} in {', '.join(ROOTS)}")
+
+
+def push(mod):
+    folder = mod_folder(mod)[0]
+    if not os.path.isfile(os.path.join(folder, "main.lua")):
+        die(f"{folder} has no main.lua")
+    dev = f"{ONBOARD}/.adds/{mod}/dev"
+    there = {line.split(" ", 1)[1] for line in text("/ls", path=dev).splitlines() if " " in line}
+    scripts = sorted(f for f in os.listdir(folder) if f.endswith(".lua"))
+    for name in scripts:
+        put(open(os.path.join(folder, name), "rb").read(), f"{dev}/{name}")
+    for gone in there - set(scripts):
+        if gone.endswith(".lua"):
+            call("/file", "DELETE", path=f"{dev}/{gone}")
+    print(f"pushed {len(scripts)} scripts to {dev}")
+    reload(mod)
+
+
+def reload(mod):
+    out, _ = call("/reload", "POST", b"", mod=mod)
+    print(out.decode(errors="replace").strip())
+    show_new_log()
+
+
+def show_new_log(follow=False, everything=False):
+    """What's new in the log. Following, it carries on across restarts: it waits for the Kobo to
+    answer again and starts from the new log."""
+    c = config()
+    start = 0 if everything else int(c.get("log", 0))
+    while True:
+        try:
+            out, headers = call("/log", quiet=follow, timeout=10, **{"from": start})
+        except (urllib.error.URLError, OSError):
+            print(f"\n--- the Kobo stopped answering at {time.strftime('%H:%M:%S')}", flush=True)
+            while True:
+                time.sleep(5)
+                try:
+                    call("/ping", quiet=True, timeout=3)
+                    break
+                except (urllib.error.URLError, OSError):
+                    pass
+            print(f"--- back at {time.strftime('%H:%M:%S')}", flush=True)
+            start = 0
+            continue
+        next_start = int(headers["X-Next"])
+        if next_start < start:  # a new log, after a restart
+            start = 0
+            continue
+        sys.stdout.write(out.decode(errors="replace"))
+        sys.stdout.flush()
+        start = next_start
+        save(log=start)
+        if not follow:
+            return
+        time.sleep(1)
+
+
+# ---- installing, rebooting ----
+
+def wait_for_kobo(after=None, timeout=240):
+    print("waiting for the Kobo", end="", flush=True)
+    started = time.time()
+    time.sleep(after or 0)
+    while time.time() - started < timeout:
+        try:
+            call("/ping", timeout=3, quiet=True)
+            print(f" back after {round(time.time() - started)} s")
+            save(log=0)
+            return
+        except (urllib.error.URLError, OSError):
+            print(".", end="", flush=True)
+            time.sleep(3)
+    die("\nthe Kobo didn't come back: check it, and that its Wi-Fi is on")
+
+
+def reboot():
+    call("/reboot", "POST", b"")
+    wait_for_kobo(after=15)
+
+
+def build(mod):
+    folder, script, so = mod_folder(mod)
+    built = subprocess.run(["sh", script, mod], cwd=os.path.dirname(folder), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if built.returncode:
+        errors = [line for line in built.stderr.splitlines() if "error" in line.lower() or not line.startswith(" ")]
+        die("\n".join(errors[-20:]) or f"couldn't build {mod}")
+    return so
+
+
+def install(mod, then_reboot=True):
+    so = build(mod)
+    put(open(so, "rb").read(), f"/usr/local/Kobo/imageformats/lib{mod}.so")
+    print(f"installed lib{mod}.so ({os.path.getsize(so)} bytes)")
+    if then_reboot:
+        reboot()
+
+
+def setup(mount):
+    if not os.path.isdir(os.path.join(mount, ".kobo")):
+        die(f"no Kobo at {mount}: plug it in and mount it, or give its mount point")
+    package = os.path.join(mount, ".kobo", "KoboRoot.tgz")
+    if os.path.exists(package):
+        die(f"{package} is already waiting to be installed; eject and let it install first")
+    so = build("devtools")
+    token = config().get("token") or secrets.token_hex(16)
+    folder = os.path.join(mount, ".adds", "devtools")
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "token"), "w") as f:
+        f.write(token + "\n")
+    with tarfile.open(package, "w:gz") as tar:
+        info = tar.gettarinfo(so, "usr/local/Kobo/imageformats/libdevtools.so")
+        info.uid = info.gid = 0
+        info.uname = info.gname = "root"
+        with open(so, "rb") as f:
+            tar.addfile(info, f)
+    save(token=token)
+    print(f"devtools is in {package}, with its token in .adds/devtools/token.")
+    print("Eject the Kobo; it installs as it restarts. Then connect it to Wi-Fi and run tools/kobo find.")
+
+
+def find():
+    mine = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    mine.connect(("192.0.2.1", 9))
+    prefix = mine.getsockname()[0].rsplit(".", 1)[0]
+
+    def try_host(n):
+        host = f"{prefix}.{n}"
+        try:
+            with socket.create_connection((host, PORT), timeout=1.5):
+                return host
+        except OSError:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(64) as pool:
+        hosts = [h for h in pool.map(try_host, range(1, 255)) if h]
+    for host in hosts:
+        try:
+            if text("/ping", host=host, timeout=3).startswith("devtools"):
+                save(host=host)
+                print(f"found the Kobo at {host}")
+                return
+        except SystemExit:
+            pass
+    die(f"no Kobo with devtools on {prefix}.0/24: is it on Wi-Fi, and was setup's package installed?")
+
+
+# ---- scenarios ----
+
+def on_screen(label):
+    """Whether a widget shows label, as tap would find it, without stopping if none does."""
+    want = label.lower()
+    words = re.compile(r"(?<!\w)" + re.escape(want) + r"(?!\w)")
+    return any(w["w"] > 0 and w["h"] > 0 and (plain(w.get("text")).lower() == want or words.search(plain(w.get("text")).lower()))
+               for w in widgets())
+
+
+def keep_screen(folder, name):
+    open(os.path.join(folder, name + ".png"), "wb").write(call("/shot")[0])
+    with open(os.path.join(folder, name + ".txt"), "w") as f:
+        for w in widgets():
+            if w.get("text") or w.get("window"):
+                f.write("  " * w["depth"] + describe(w) + "\n")
+
+
+def keep_log(folder):
+    """What the mods logged during the run, from where the log was when it started."""
+    try:
+        out, headers = call("/log", quiet=True, timeout=10, **{"from": int(config().get("log", 0))})
+        open(os.path.join(folder, "log.txt"), "ab").write(out)
+        save(log=int(headers["X-Next"]))
+    except (urllib.error.URLError, OSError):
+        pass
+
+
+def run_once(steps, folder):
+    """Each step in turn; false at the first that fails, with the screen and log kept."""
+    os.makedirs(folder, exist_ok=True)
+    keep_log(folder)
+    for number, (line, words) in enumerate(steps, 1):
+        print(f"{number:3} {line}", flush=True)
+        why = None
+        try:
+            command, args = words[0], words[1:]
+            if command == "expect":
+                if not on_screen(" ".join(args)):
+                    why = "not on screen"
+            elif command == "expect-not":
+                if on_screen(" ".join(args)):
+                    why = "on screen, and it shouldn't be"
+            elif command == "tap" and "until" in args:
+                # For a tap Kobo sometimes doesn't take the first time: again, up to three times.
+                at = args.index("until")
+                what, wanted = args[:at], " ".join(args[at + 1:])
+                for _ in range(3):
+                    main(["tap"] + what)
+                    if on_screen(wanted):
+                        break
+                else:
+                    why = f"{wanted!r} never came"
+            elif command == "wait":
+                time.sleep(int(args[0]) / 1000)
+            elif command in ("shot", "tree"):
+                keep_screen(folder, f"{number:03}-" + (args[0] if args else command))
+            else:
+                main(words)
+        except SystemExit as stopped:
+            if stopped.code:
+                why = "stopped"
+        if why:
+            print(f"    failed: {why}", flush=True)
+            try:
+                keep_screen(folder, f"{number:03}-failed")
+            except SystemExit:
+                pass
+            keep_log(folder)
+            return False
+        keep_log(folder)
+    return True
+
+
+def run_scenario(path, repeat):
+    steps = []
+    for line in open(path):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            steps.append((line, shlex.split(line)))
+    name = os.path.splitext(os.path.basename(path))[0]
+    base = os.path.join(BUILD, "runs", name, time.strftime("%Y-%m-%d-%H%M%S"))
+    passed = 0
+    for round_number in range(1, repeat + 1):
+        folder = os.path.join(base, str(round_number)) if repeat > 1 else base
+        if repeat > 1:
+            print(f"--- run {round_number} of {repeat}", flush=True)
+        if not run_once(steps, folder):
+            print(f"{name}: failed in run {round_number}; what was on screen is in {folder}")
+            sys.exit(1)
+        passed += 1
+    print(f"{name}: passed{f' {passed} times' if repeat > 1 else ''}; screenshots and the log are in {base}")
+
+
+def main(argv):
+    global DEVICE
+    if argv and argv[0] == "--emu":
+        DEVICE = EMULATOR
+        if not os.path.exists(DEVICE):
+            die(f"no emulator set up: {EMULATOR} should hold its token")
+        argv = argv[1:]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    command, args = argv[0], argv[1:]
+    if command == "setup":
+        setup(args[0] if args else "/run/media/" + os.environ.get("USER", "") + "/KOBOeReader")
+    elif command == "find":
+        find()
+    elif command == "ping":
+        print(text("/ping").strip(), "at", config()["host"])
+    elif command == "shot":
+        out = args[0] if args else os.path.join(BUILD, "shot.png")
+        open(out, "wb").write(call("/shot")[0])
+        print(out)
+    elif command == "tree":
+        show_tree("--all" in args)
+    elif command in ("tap", "press"):
+        no_settle = "--no-settle" in args
+        x, y = target([a for a in args if a != "--no-settle"])
+        call("/" + command, "POST", b"", x=x, y=y)
+        if not no_settle:
+            settle()
+    elif command == "tick":
+        x, y = tick_box(" ".join(args))
+        call("/tap", "POST", b"", x=x, y=y)
+        settle()
+    elif command == "swipe":
+        if len(args) < 4:
+            die("swipe X1 Y1 X2 Y2 [MS]")
+        call("/swipe", "POST", b"", x=args[0], y=args[1], x2=args[2], y2=args[3], ms=args[4] if len(args) > 4 else 300)
+        settle()
+    elif command == "settle":
+        settle()
+    elif command == "log":
+        show_new_log(follow="-f" in args, everything="--all" in args)
+    elif command == "crash":
+        sys.stdout.write(text("/file", path=f"{ONBOARD}/.adds/devtools/crash.log") if "crash.log" in text("/ls", path=f"{ONBOARD}/.adds/devtools") else "no crashes saved\n")
+    elif command == "push":
+        push(args[0])
+    elif command == "reload":
+        reload(args[0])
+    elif command == "eval":
+        out, _ = call("/eval", "POST", " ".join(args[1:]).encode(), mod=args[0])
+        print(out.decode(errors="replace").rstrip())
+    elif command == "undev":
+        call("/file", "DELETE", path=f"{ONBOARD}/.adds/{args[0]}/dev")
+        reboot()
+    elif command == "install":
+        install(args[0], "--no-reboot" not in args)
+    elif command == "reboot":
+        reboot()
+    elif command == "sh":
+        out, headers = call("/sh", "POST", " ".join(args).encode(), timeout=40)
+        sys.stdout.write(out.decode(errors="replace"))
+        sys.exit(int(headers.get("X-Exit", 0)))
+    elif command == "ls":
+        sys.stdout.write(text("/ls", path=args[0]))
+    elif command == "get":
+        data = call("/file", path=args[0])[0]
+        if len(args) > 1:
+            open(args[1], "wb").write(data)
+        else:
+            sys.stdout.buffer.write(data)
+    elif command == "put":
+        put(open(args[0], "rb").read(), args[1])
+        print("written")
+    elif command == "rm":
+        call("/file", "DELETE", path=args[0])
+        print("removed")
+    elif command == "run":
+        if not args:
+            die("run FILE [--repeat N]")
+        repeat = int(args[args.index("--repeat") + 1]) if "--repeat" in args else 1
+        run_scenario(args[0], repeat)
+    else:
+        die(f"no command {command}; tools/kobo help lists them")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

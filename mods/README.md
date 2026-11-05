@@ -28,6 +28,10 @@ Build it with `mods/build.sh <folder>`, which needs zig 0.17.0, curl the first t
 
 A crash after a screen has opened isn't caught.
 
+## Developing on a Kobo
+
+`devtools/` is a mod for developing on a real Kobo, driven from the computer over Wi-Fi with `tools/kobo`: tap and swipe, what's on screen with its text and places, screenshots, every mod's log and Nickel's crashes, files and a shell, pushing a Lua mod's changed scripts without a rebuild, and running whole scenarios of steps. Anyone with its token is root on the Kobo, so it's only for your own Kobo on your own Wi-Fi. See [devtools/README.md](devtools/README.md).
+
 ## The Patches mod
 
 It's all Lua, in `patches/`. It adds "Kobo Patcher" at the top of Settings, like other apps' patchers do, and switches patches on and off in Nickel's memory, straight away, and never changes the firmware's files. Each patch's edits are found in libnickel or the nickel program as Nickel has loaded them, and every edit's bytes are checked before any are written. Bytes that match neither side of a patch show as "Changed" and are left alone. A patch with some edits on and some off, as an older version of it leaves the files, shows as off, and switching it finishes or undoes it.
