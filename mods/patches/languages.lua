@@ -137,12 +137,16 @@ local THREE = {
   por = "pt", ron = "ro", rum = "ro", rus = "ru", spa = "es", swe = "sv", tur = "tr", ukr = "uk",
 }
 
--- Lowercased, without its region, so ru, ru-RU, RU and rus are all ru.
+-- Codes that say a book has no one language: undetermined, several, none, and not listed.
+local NO_LANGUAGE = {und = true, mul = true, zxx = true, mis = true}
+
+-- Lowercased, without its region, so ru, ru-RU, RU and rus are all ru. A three-letter code that
+-- isn't above stays as it is, since cutting it short can make another language of it, and one
+-- that names no language is "", so the book gets no entry of its own and is only under All.
 function languages.clean(code)
   local c = code:lower():gsub("[-_].*$", "")
-  if THREE[c] then return THREE[c] end
-  if #c == 3 then return c:sub(1, 2) end
-  return c
+  if NO_LANGUAGE[c] then return "" end
+  return THREE[c] or c
 end
 
 local function filters()
