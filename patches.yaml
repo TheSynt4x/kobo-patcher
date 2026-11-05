@@ -127,6 +127,7 @@ patches:
     title: Home's empty tile opens My Books
     category: Ads and upsells
     description: When no book is open, Home's "Need something to read?" tile opens your books instead of the store, without the shop's name or first-purchase offers.
+    restart: yes  # the tile's text is only set again when Home is built
     file: libnickel.so.1.0.0
     per_firmware:
       "4.46.23852":
