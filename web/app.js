@@ -1,6 +1,6 @@
 import {
   Refused, UnsupportedFirmware, inspectKobo, koboSerial, listIds, writeFullBackup, planPatch, planUndo, readBackup, readFirmware,
-  readKOReader, sha256, writeToKobo,
+  readDictionary, readKOReader, sha256, writeToKobo,
 } from "./patcher.js";
 import {
   CATEGORIES, FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, firmwareRequestUrl, firmwareSearchUrl, registryFor,
@@ -28,7 +28,7 @@ const LEFTOVER_ADDONS = [
 const $ = (id) => document.getElementById(id);
 const canWrite = "showDirectoryPicker" in window && "showSaveFilePicker" in window;
 const state = {
-  drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {}, mods: {}, list: null, riskAccepted: false,
+  drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {}, mods: {}, list: null, riskAccepted: false, dictionaries: [],
 };
 
 function say(id, text, kind = "") {
@@ -111,7 +111,8 @@ function readyToPatch() {
   const addons = chosenAddons();
   const { nickelmenu, koreader } = addonsToRemove();
   const modsChanged = modsToInstall().length || modsToRemove().length;
-  if (!patchesChanged() && !choicesChanged() && !addons.length && !nickelmenu && !koreader && !modsChanged) return false;
+  const dictionaries = state.dictionaries.length;
+  if (!patchesChanged() && !choicesChanged() && !addons.length && !nickelmenu && !koreader && !modsChanged && !dictionaries) return false;
   return addons.every((addon) => state.addons[addon.id]) && (!patchesChanged() || !!state.firmware);
 }
 
@@ -130,6 +131,7 @@ function render() {
   $("connect").disabled = !canWrite || state.busy;
   $("backup").disabled = !state.drive || state.busy;
   $("firmware").disabled = state.busy || !state.kobo;
+  $("dictionary-files").disabled = state.busy || !state.kobo;
   for (const box of document.querySelectorAll("#patches input")) box.disabled = state.busy;
   if ($("via-kobopatcher")) $("via-kobopatcher").hidden = !viaKoboPatcher();
   // KOReader starts from the row Kobo Patcher adds to More, so adding it brings Kobo Patcher along.
@@ -447,7 +449,9 @@ async function run(makePlan) {
 
       say("run-status", "Writing to the Kobo…");
       await writeToKobo(state.root, plan, (text) => say("run-status", text));
-      Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, addons: {}, mods: {}, list: null });
+      Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, addons: {}, mods: {}, list: null, dictionaries: [] });
+      $("dictionary-files").value = "";
+      say("dictionary-status", "");
       $("patches").replaceChildren();
       showFirmwareLinks();
       say("kobo-status", "");
@@ -478,6 +482,7 @@ function patch() {
     mods: modsToInstall(),
     mod,
     koreader: addons.includes("koreader") ? state.addons.koreader : null,
+    dictionaries: state.dictionaries,
   }));
 }
 
@@ -527,6 +532,33 @@ $("risk-accept").addEventListener("click", () => {
   state.riskAccepted = true;
   $("risk").close();
   selectKobo();
+});
+// Dictionaries need the patch that lets Kobo use one for a language it doesn't list, so choosing
+// one ticks it, where this firmware has it.
+$("dictionary-files").addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  state.dictionaries = [];
+  say("dictionary-status", files.length ? "Checking…" : "");
+  await busy(async () => {
+    const lines = [];
+    for (const file of files) {
+      try {
+        const dictionary = await readDictionary(file);
+        state.dictionaries.push(dictionary);
+        lines.push(`${dictionary.name}: recognised.`);
+      } catch (error) {
+        lines.push(explain(error));
+      }
+    }
+    const patchBox = $("patch-book-language-dictionaries");
+    if (state.dictionaries.length && patchBox && !patchBox.checked) {
+      patchBox.checked = true;
+      lines.push("Dictionaries for every book language is ticked too, so Kobo uses them.");
+    }
+    const allGood = state.dictionaries.length === files.length;
+    say("dictionary-status", lines.join(" "), allGood ? "good" : "bad");
+  });
+  render();
 });
 $("backup").addEventListener("click", backUpEverything);
 $("patch").addEventListener("click", patch);

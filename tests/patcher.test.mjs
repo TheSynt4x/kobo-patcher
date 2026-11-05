@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
   PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
-  listIds, readNickel, setConf, sha256, writeToKobo,
+  listIds, readDictionary, readNickel, setConf, sha256, writeToKobo,
 } from "../web/patcher.js";
 import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
 
@@ -496,4 +496,23 @@ test("a record from before mods were offered still reads", async () => {
   assert.deepEqual([installed.patches, installed.mods], [["margins"], {}]);
   await writeToKobo(kobo, planPatch(null, [], { mods: [MOD] }));
   assert.deepEqual(await readRecord(kobo), { firmware: "4.38.23852", patches: ["margins"], mods: { patches: "abc" } });
+});
+
+test("a dictionary is checked, named for its language, and copied to custom-dict, which Undo leaves", async () => {
+  const page = new TextEncoder().encode("<p>a page</p>");
+  const zip = (name, files) => new File([buildZip(files)], name);
+  const good = zip("DictHTML-RU.zip", [{ name: "words", data: new Uint8Array(8) }, { name: "aa.html", data: page }]);
+  const dictionary = await readDictionary(good);
+  assert.deepEqual([dictionary.name, dictionary.language], ["dicthtml-ru.zip", "ru"]);
+  assert.equal((await readDictionary(zip("dicthtml-ru-en.zip", [{ name: "words", data: page }, { name: "ab.html", data: page }]))).language, "ru-en");
+
+  await assert.rejects(readDictionary(zip("russian.zip", [{ name: "words", data: page }])), /isn't named like a Kobo dictionary/);
+  await assert.rejects(readDictionary(zip("dicthtml-sv.zip", [{ name: "readme.txt", data: page }])), /isn't a Kobo dictionary/);
+  await assert.rejects(readDictionary(new File([page], "dicthtml-de.zip")), /isn't a zip/);
+
+  const kobo = await fakeKobo({});
+  await writeToKobo(kobo, planPatch(null, [], { dictionaries: [dictionary] }));
+  assert.deepEqual(await readFake(kobo, ".kobo/custom-dict/dicthtml-ru.zip"), new Uint8Array(await good.arrayBuffer()));
+  assert.equal(await readFake(kobo, ".kobo/KoboRoot.tgz"), null);
+  assert.deepEqual(planUndo(null, (await inspectKobo(kobo)).installed).dictionaries, []);
 });

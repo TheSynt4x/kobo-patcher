@@ -206,6 +206,24 @@ export async function readKOReader(file) {
   return { version: release.version, file, entries };
 }
 
+// A dictionary in Kobo's own format: a zip of its word list and pages, named for its language,
+// such as dicthtml-ru.zip, or dicthtml-ru-en.zip for one between two. Kobo finds those in
+// .kobo/custom-dict by name and shows them as "(Custom)", apart from the ones Kobo downloads.
+const DICTIONARY_NAME = /^dicthtml-([a-z]{2,3}(?:-[a-z]{2,3})?)\.zip$/i;
+
+export async function readDictionary(file) {
+  const match = DICTIONARY_NAME.exec(file.name);
+  if (!match) {
+    throw new Refused(`"${file.name}" isn't named like a Kobo dictionary, dicthtml- then its language, such as dicthtml-ru.zip`);
+  }
+  const names = (await zipEntries(file)).map((entry) => entry.name);
+  if (!names.includes("words") || !names.some((name) => name.endsWith(".html"))) {
+    throw new Refused(`"${file.name}" isn't a Kobo dictionary: it has no word list and pages`);
+  }
+  const language = match[1].toLowerCase();
+  return { name: `dicthtml-${language}.zip`, language, file };
+}
+
 // Where an exported function starts in a 32-bit little-endian ELF file, or null.
 export function functionOffset(elf, name) {
   const magic = [0x7f, 0x45, 0x4c, 0x46, 0x01, 0x01];
@@ -635,7 +653,7 @@ function systemFiles(firmware) {
 // mods: [{ id, data, sha256 }] to add. remove.mods: ids to remove the next time Nickel starts.
 // mod: { list: { name, text }, choices: { id: on } } for Kobo Patcher to switch those patches on the
 // Kobo, from its list in .adds/patches/lists, instead of them going into the system files.
-export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null } = {}) {
+export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null, dictionaries = [] } = {}) {
   const chosen = PATCHES.filter((patch) => patchIds.includes(patch.id));
   if (chosen.length && !firmware) throw new Refused("patches need the firmware file");
   const files = [];
@@ -666,6 +684,7 @@ export function planPatch(firmware, patchIds, { koreader = null, edits = {}, rem
     files,
     storage,
     koreader,
+    dictionaries,
     remove,
     installsMods: mods.map((mod) => mod.id),
     record: recordChange(firmware ? patchIds : null, mods, remove?.mods ?? []),
@@ -690,10 +709,23 @@ export function planUndo(firmware, installed) {
     files: firmware ? systemFiles(firmware) : [],
     storage: [],
     koreader: null,
+    // Dictionaries stay: they're the user's own files, and harmless without the patches.
+    dictionaries: [],
     remove: { ...installed, mods },
     installsMods: [],
     record: recordChange(firmware ? [] : null, [], mods),
   };
+}
+
+async function copyDictionaries(dot, dictionaries, progress) {
+  const dir = await dot.getDirectoryHandle("custom-dict", { create: true });
+  for (const [i, dictionary] of dictionaries.entries()) {
+    progress(`Copying dictionaries: ${i + 1} of ${dictionaries.length}…`);
+    const writable = await (await dir.getFileHandle(dictionary.name, { create: true })).createWritable();
+    await writable.write(dictionary.file);
+    await writable.close();
+  }
+  await cleanMacFiles(dir);
 }
 
 async function copyKOReader(root, koreader, progress) {
@@ -837,8 +869,9 @@ export async function writeToKobo(root, plan, progress = () => {}) {
     await cleanMacFiles(dir);
   }
   if (plan.koreader) await copyKOReader(root, plan.koreader, progress);
+  if (plan.dictionaries?.length) await copyDictionaries(dot, plan.dictionaries, progress);
   const removing = plan.remove?.koreader || plan.remove?.nickelmenu || !!plan.remove?.mods?.length;
-  if (!plan.files.length && !plan.koreader && !plan.settings.length && !plan.storage?.length && !removing) {
+  if (!plan.files.length && !plan.koreader && !plan.dictionaries?.length && !plan.settings.length && !plan.storage?.length && !removing) {
     throw new Refused("there's nothing to change, so nothing was written");
   }
   if (removing) await removeAddons(root, plan.remove);

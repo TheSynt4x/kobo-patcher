@@ -113,6 +113,15 @@
   <section id="step-patches" class="locked">
     <h2><span>2</span>Patches</h2>
     <div id="patches"></div>
+    <details class="dictionaries" id="dictionaries">
+      <summary>Add dictionaries (optional)</summary>
+      <p>For languages Kobo has no dictionary of its own for, such as Russian. Choose dictionaries in Kobo's format
+        that you've downloaded, named <code>dicthtml-</code> and the language, such as <code>dicthtml-ru.zip</code>.
+        They go in the Kobo's <code>.kobo/custom-dict</code> folder and show in its dictionary settings as Custom.
+        Kobo's own dictionaries are downloaded from its Settings instead.</p>
+      <input type="file" id="dictionary-files" accept=".zip" multiple disabled aria-label="Dictionary files">
+      <p class="status" id="dictionary-status" role="status"></p>
+    </details>
   </section>
 
   <section id="step-firmware" class="locked">
