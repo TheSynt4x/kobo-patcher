@@ -94,10 +94,12 @@ function forFiles(ids) {
   return ids.filter((id) => !(viaKoboPatcher() && state.list.ids.has(id)));
 }
 
-// The firmware is only needed to change which patches are in the Kobo's system files.
+// The firmware is only needed to change which patches are in the Kobo's system files. Patches the
+// files have that Kobo Patcher now switches count as a change too, so the files are built again
+// without them, once, and each patch is in one place only.
 function patchesChanged() {
   const chosen = forFiles(chosenPatches());
-  const before = forFiles(recorded());
+  const before = recorded();
   return chosen.length !== before.length || chosen.some((id) => !before.includes(id));
 }
 
@@ -123,7 +125,7 @@ function readyToPatch() {
 
 function render() {
   $("browser-notice").hidden = canWrite;
-  $("step-firmware").hidden = !state.kobo || (!patchesChanged() && !forFiles(recorded()).length);
+  $("step-firmware").hidden = !state.kobo || (!patchesChanged() && !recorded().length);
   $("step-patches").classList.toggle("locked", !state.kobo);
   $("step-firmware").classList.toggle("locked", !state.kobo);
   // Stays readable after a run, when the Kobo is no longer selected, for its "Done" message.
