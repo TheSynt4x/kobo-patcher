@@ -41,7 +41,7 @@ flags="-target arm-linux-gnueabihf.2.17 -mcpu=cortex_a7 -Os -fvisibility=hidden 
   -fno-sanitize=all -fno-unwind-tables -fno-asynchronous-unwind-tables -g0 -fPIC"
 cxx() {
   zig c++ -c $flags -std=c++11 -fno-exceptions -frtti -fvisibility-inlines-hidden -Wno-gnu-inline-cpp-without-extern \
-    -DNK_NAME="\"$name\"" -I"$out" -I"$kit" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" \
+    -DNK_NAME="\"$name\"" -I"$out" -I"$kit" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" -I"$qt/QtSql" \
     -o "$2" "$1"
 }
 objects=
@@ -81,7 +81,8 @@ if [ -f "$folder/main.lua" ]; then
   cxx "$kit/tools.cpp" "$out/tools.o"
   cxx "$kit/patch.cpp" "$out/patch.o"
   cxx "$kit/ui.cpp" "$out/ui.o"
-  objects="$objects $out/lua.o $out/tools.o $out/patch.o $out/ui.o"
+  cxx "$kit/books.cpp" "$out/books.o"
+  objects="$objects $out/lua.o $out/tools.o $out/patch.o $out/ui.o $out/books.o"
   libs=-lm
 fi
 link() {

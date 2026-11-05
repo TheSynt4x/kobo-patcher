@@ -10,6 +10,7 @@
  * - nk.replace_self only installs a build whose SHA-512 the mod already trusts.
  *
  * As in lua.cpp, nothing raises a Lua error while a Qt value made here is still alive. */
+#include <QLocale>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -225,7 +226,9 @@ static bool allowed_path(const char *given, QString *out) {
     QString path = QString::fromUtf8(given);
     if (!path.startsWith(QLatin1Char('/'))) path = QStringLiteral(NK_FOLDER "/") + path;
     path = QDir::cleanPath(path);
-    if (!path.startsWith(QLatin1String(ONBOARD)) || path.contains(QLatin1String("/../"))) return false;
+    /* Cleaning takes the onboard folder's own slash off, and it can be listed too. */
+    bool onboard = path.startsWith(QLatin1String(ONBOARD)) || path + QLatin1Char('/') == QLatin1String(ONBOARD);
+    if (!onboard || path.contains(QLatin1String("/../"))) return false;
     *out = path;
     return true;
 }
@@ -709,6 +712,18 @@ static int l_decompose(lua_State *co) {
     return 1;
 }
 
+/* nk.text.language_name(code): a language's name in itself, capitalised, as Kobo's language
+ * picker shows them: "ru" is Русский, "sv" Svenska. Empty for a code Qt doesn't know. */
+static int l_language_name(lua_State *co) {
+    QLocale locale(QString::fromUtf8(luaL_checkstring(co, 1)));
+    /* Qt names English by its country, as U.S. English; Kobo's picker just says English. */
+    QString name = locale.language() == QLocale::C ? QString()
+                   : locale.language() == QLocale::English ? QStringLiteral("English") : locale.nativeLanguageName();
+    if (!name.isEmpty()) name = locale.toUpper(name.left(1)) + name.mid(1);
+    push_qstring(co, name);
+    return 1;
+}
+
 /* ---- nk.file ---- */
 
 static int file_failed(lua_State *co, const char *why) {
@@ -901,7 +916,7 @@ void kit_open_tools(lua_State *L) {
     static const luaL_Reg crypto_functions[] = {{"md5", l_md5}, {"sha1", l_sha1}, {"sha256", l_sha256}, {"sha512", l_sha512},
                                                 {"ed25519_verify", l_ed25519_verify}, {0, 0}};
     static const luaL_Reg device_functions[] = {{"model", l_model}, {"firmware", l_firmware}, {0, 0}};
-    static const luaL_Reg text_functions[] = {{"lower", l_lower}, {"decompose", l_decompose}, {0, 0}};
+    static const luaL_Reg text_functions[] = {{"lower", l_lower}, {"decompose", l_decompose}, {"language_name", l_language_name}, {0, 0}};
     add_library(L, "http", http_functions);
     add_library(L, "re", re_functions);
     add_library(L, "file", file_functions);

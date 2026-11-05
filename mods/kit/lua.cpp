@@ -158,6 +158,26 @@ QByteArray kit_ask(int fn, void (*push)(lua_State *, void *), void *arg) {
     return answer;
 }
 
+void kit_ask_table(int fn, void (*use)(lua_State *co, int index, void *arg), void *arg) {
+    lua_State *co = task(fn);
+    lua_State *outer = running;
+    running = co;
+    int results = 0;
+    int status = lua_resume(co, outer, 0, &results);
+    running = outer;
+    if (status == LUA_YIELD) {
+        lua_pop(co, results);
+        nk_log("a function that had to answer straight away waited instead");
+        return;
+    }
+    if (status != LUA_OK) report(co);
+    else {
+        if (results > 0 && lua_istable(co, -results)) use(co, lua_gettop(co) - results + 1, arg);
+        lua_settop(co, 0);
+    }
+    luaL_unref(L, LUA_REGISTRYINDEX, tasks->take(co));
+}
+
 /* For functions that wait: they need a coroutine the kit can resume. */
 static void must_wait_here(lua_State *co) {
     if (!tasks->contains(co) || !lua_isyieldable(co)) luaL_error(co, "this can only wait in a callback");
@@ -1014,6 +1034,7 @@ extern "C" void nk_mod_init(void) {
     luaL_newlib(L, nk);
     kit_open_tools(L);
     kit_open_ui(L);
+    kit_open_books(L);
     lua_pushstring(L, NK_NAME);
     lua_setfield(L, -2, "name");
     lua_setglobal(L, "nk");
