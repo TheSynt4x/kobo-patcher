@@ -14,7 +14,7 @@ export const SUPPORTED = Object.fromEntries(
 );
 
 // Each patch's settings for Kobo eReader.conf, as [section, key, value], come from patches.yaml.
-export const PATCHES = REGISTRY.filter((item) => item.kind === "patch").map((item) => ({ settings: [], ...item }));
+export const PATCHES = REGISTRY.filter((item) => item.kind === "patch").map((item) => ({ settings: [], offSettings: [], ...item }));
 
 export class Refused extends Error {}
 
@@ -505,10 +505,6 @@ export async function inspectKobo(root) {
   const record = adds ? await readRecord(adds, version.firmware) : { patches: [], mods: {} };
   const kobopatcher = adds && await dirExists(adds, "patches") ? await adds.getDirectoryHandle("patches") : null;
   const installed = {
-    // An empty nm folder is what's left after NickelMenu uninstalls itself.
-    nickelmenu: !!adds && await dirExists(adds, "nm")
-      && await exists(await adds.getDirectoryHandle("nm"), "doc")
-      && !await exists(await adds.getDirectoryHandle("nm"), "uninstall"),
     patches: record.patches,
     mods: record.mods,
     koreader: !!adds && await dirExists(adds, "koreader"),
@@ -568,9 +564,9 @@ function systemFiles(firmware) {
 // mods: [{ id, data, sha256 }] to add. remove.mods: ids to remove the next time Nickel starts.
 // mod: { list: { name, text }, choices: { id: on } } for Kobo Patcher to switch those patches on the
 // Kobo, from its list in .adds/patches/lists, instead of them going into the system files.
-// on: every patch that's ticked, however it's put on, for its settings. Turning one off leaves them,
-// because on a model that has the feature already, its "off" values would take it away.
-export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null, dictionaries = [], on = patchIds } = {}) {
+// on: every patch that's ticked, however it's put on, for its settings. off: the patches with
+// settings that were on and are now unticked, which get their when_off values, as in Kobo Patcher.
+export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null, dictionaries = [], on = patchIds, off = [] } = {}) {
   const chosen = PATCHES.filter((patch) => patchIds.includes(patch.id));
   if (chosen.length && !firmware) throw new Refused("patches need the firmware file");
   const files = [];
@@ -593,7 +589,10 @@ export function planPatch(firmware, patchIds, { koreader = null, edits = {}, rem
     storage.push({ dir: ["patches"], name: "choices.txt", data: encoder.encode(choices) });
   }
   return {
-    settings: PATCHES.filter((patch) => on.includes(patch.id)).flatMap((patch) => patch.settings),
+    settings: [
+      ...PATCHES.filter((patch) => off.includes(patch.id) && !on.includes(patch.id)).flatMap((patch) => patch.offSettings),
+      ...PATCHES.filter((patch) => on.includes(patch.id)).flatMap((patch) => patch.settings),
+    ],
     files,
     storage,
     koreader,
@@ -675,20 +674,10 @@ async function removeAddons(root, remove) {
   if (remove.koreader && await dirExists(adds, "koreader")) {
     throw new Refused("KOReader's folder is still on the Kobo after removing it");
   }
-  if (remove.nickelmenu && !await exists(await adds.getDirectoryHandle("nm"), "uninstall")) {
-    throw new Refused("couldn't leave NickelMenu's uninstall file on the Kobo");
-  }
 }
 
 async function removeFromAdds(adds, remove) {
   if (remove.koreader) await adds.removeEntry("koreader", { recursive: true });
-  if (!await dirExists(adds, "nm")) return;
-  const nm = await adds.getDirectoryHandle("nm");
-  // The menu entry this page used to add for KOReader, before Kobo Patcher put it in More.
-  if (remove.koreader && await exists(nm, "koreader")) await nm.removeEntry("koreader");
-  // NickelMenu removes itself when it finds this file on the next restart.
-  if (remove.nickelmenu) await writeFile(nm, "uninstall", new Uint8Array(0));
-  await cleanMacFiles(nm);
 }
 
 // Folders to leave out of a backup: the computer's, not the Kobo's.
@@ -783,7 +772,7 @@ export async function writeToKobo(root, plan, progress = () => {}) {
   }
   if (plan.koreader) await copyKOReader(root, plan.koreader, progress);
   if (plan.dictionaries?.length) await copyDictionaries(dot, plan.dictionaries, progress);
-  const removing = plan.remove?.koreader || plan.remove?.nickelmenu || !!plan.remove?.mods?.length;
+  const removing = plan.remove?.koreader || !!plan.remove?.mods?.length;
   if (!plan.files.length && !plan.koreader && !plan.dictionaries?.length && !plan.settings.length && !plan.storage?.length && !removing) {
     throw new Refused("there's nothing to change, so nothing was written");
   }

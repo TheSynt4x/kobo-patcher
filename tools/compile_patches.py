@@ -426,6 +426,8 @@ def main():
         item = {"id": patch["id"], "kind": "patch", "category": patch["category"], "title": patch["title"], "description": patch["description"]}
         item.update({key: patch[key] for key in ("warning", "group") if key in patch})
         item["settings"] = [[*setting["key"].split("/", 1), setting["value"]] for setting in patch.get("settings", [])]
+        item["offSettings"] = [[*setting["key"].split("/", 1), setting["when_off"]]
+                               for setting in patch.get("settings", []) if "when_off" in setting]
         offered.append({**item, "needsFirmware": True, "targets": targets[patch["id"]]})
     (out / "compiled.js").write_text(
         "// Written by tools/compile_patches.py from patches.yaml. Run `make patches` to change it.\n"

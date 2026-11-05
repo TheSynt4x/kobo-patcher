@@ -119,7 +119,8 @@ Each returns false if this firmware's keyboard isn't as expected. Calling one ag
 ## Kobo
 
 - `nk.device.model()` and `nk.device.firmware()`: this Kobo's model, from its serial, such as `"N306"`, and its firmware, such as `"4.38.23852"`.
-- `nk.device.setting(key)` and `nk.device.set_setting(key, value)`: one of Kobo's own settings, in `.kobo/Kobo/Kobo eReader.conf`, with `key` as `"Section/name"`, such as `"FeatureSettings/GoogleDrive"`. `setting` gives a string, or nil when it isn't set. `set_setting` writes it straight away, removes it when `value` is nil, and says whether it was written. Kobo reads most settings as it starts, so a change usually shows after `nk.reboot()`. They open the file the way Nickel does, and a write leaves its other settings as they are. Only once Nickel is running, though: not from `main.lua`'s top level.
+- `nk.device.setting(key)` and `nk.device.set_setting(key, value)`: one of Kobo's own settings, in `.kobo/Kobo/Kobo eReader.conf`, with `key` as `"Section/name"`, such as `"FeatureSettings/GoogleDrive"`. `setting` gives Nickel's value as a string, or nil when it isn't set. `set_setting` sets it, or removes it when `value` is nil, and says whether it did. Both go through Kobo's own `Settings`, as Nickel does: a change is in Nickel's memory and the file straight away, the rest of the file stays as it is, and what listens for that setting, like the More page for Google Drive and Dropbox, follows without a restart. Some settings are only read as Kobo starts, and those still need `nk.reboot()`. Only once Nickel is running, though: from a tap or another callback, never from `main.lua`'s top level.
+- `nk.device.on_setting(fn)`: `fn(key, value)` runs after each change to one of Kobo's settings, by Nickel or a mod, such as Kobo's sync writing what the store sends. `key` is `"Section/name"`, and `value` a string, or nil when the setting was removed. It runs after the change, so `set_setting` from `fn` wins, and that change comes back to `fn` too, so only set one that differs. From `main.lua`'s top level it only records `fn`: watching starts once Nickel is running.
 - `nk.import()`: Kobo's import, as after a USB connection, so new books show up.
 - `nk.reboot()`: restarts the Kobo the way Kobo does.
 - `nk.spawn(command)`: runs a shell command outside Nickel. Nickel may well stop, as when it starts KOReader.
@@ -141,10 +142,6 @@ These are for Kobo Patcher, and anyone building something like it.
 
 ## What's been tried
 
-All of it on a Kobo Nia, firmware 4.38.23852, most of it on a real one and some only in an emulator so far; the Libra Colour, on 4.46.23852, has run the earlier calls.
-
-- On the real Nia: places, pages, tabs, the network, files, dialogs and patching.
-- Only in an emulator, as of 5 November 2026: `nk.on_screen` and its widgets, rows placed beside Kobo's own, `page:open` on screens, `nk.screen{}`, `page:books`' columns, the keyboard and My Books' filters.
-- Not yet tried on the Libra Colour: anything added since 4 November.
+All of it on a real Kobo Nia, firmware 4.38.23852, and a real Kobo Libra Colour, on 4.46.23852, and on the Nia's firmware in an emulator. There's no emulator for the Libra Colour.
 
 `kit/nk.h` is the kit's own C layer, which C++ mods can use. It's internal: it isn't documented beyond its comments, and it may change in any release.

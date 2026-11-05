@@ -54,7 +54,7 @@ A tap by text picks the last widget that says it, which is the one drawn on top,
 
 `push` only works for Lua mods built with a kit that has `nk_dev_reload` and `nk_dev_eval` (`kit/lua.cpp`). Installing such a build once with `install` is enough; after that, scripts go over with `push`.
 
-An emulator can run it too: `--emu` before any command drives one on this computer that forwards 127.0.0.1:18484 to its port 8484, with the token in `build/emulator`. Mods in other folders are found through `KOBO_MODS`, a list of folders separated by colons, and `KOBO_BUILD` moves where the Kobo and its token are kept.
+If you have an emulator of your own running Kobo's firmware, `--emu` before any command drives it on this computer that forwards 127.0.0.1:18484 to its port 8484, with the token in `build/emulator`. Mods in other folders are found through `KOBO_MODS`, a list of folders separated by colons, and `KOBO_BUILD` moves where the Kobo and its token are kept.
 
 ## Kobo's Qt
 

@@ -10,21 +10,6 @@ const ADDON_FILES = {
   koreader: { releases: KOREADER, accept: ".zip", read: readKOReader },
 };
 
-// Add-ons on the Kobo that this page doesn't offer there, shown ticked so unticking can remove them.
-const LEFTOVER_ADDONS = [
-  {
-    id: "nickelmenu",
-    title: "NickelMenu",
-    description: "No longer offered here, now that Kobo Patcher puts KOReader on the More page. "
-      + "Untick it to remove NickelMenu and any menu entries it shows.",
-  },
-  {
-    id: "koreader",
-    title: "KOReader",
-    description: "Not offered on this firmware, because Kobo Patcher isn't. Untick it to delete KOReader.",
-  },
-];
-
 const $ = (id) => document.getElementById(id);
 const canWrite = "showDirectoryPicker" in window && "showSaveFilePicker" in window;
 const state = {
@@ -48,6 +33,11 @@ function chosenPatches() {
   return offered("patch").filter((patch) => checked(patch.id)).map((patch) => patch.id);
 }
 
+// Patches with settings that are on now, however they were put on, and unticked.
+function turnedOff() {
+  return offered("patch").filter((patch) => patch.settings?.length && !checked(patch.id) && onNow(patch.id)).map((patch) => patch.id);
+}
+
 function isInstalled(id) {
   return !!state.kobo?.installed[id];
 }
@@ -60,7 +50,7 @@ function chosenAddons() {
 // Only an add-on with a row on the page can be unticked.
 function addonsToRemove() {
   const unticked = (id) => isInstalled(id) && !!$(`patch-${id}`) && !checked(id);
-  return { nickelmenu: unticked("nickelmenu"), koreader: unticked("koreader") };
+  return { koreader: unticked("koreader") };
 }
 
 function modInstalled(id) {
@@ -109,10 +99,10 @@ function choicesChanged() {
 
 function readyToPatch() {
   const addons = chosenAddons();
-  const { nickelmenu, koreader } = addonsToRemove();
+  const { koreader } = addonsToRemove();
   const modsChanged = modsToInstall().length || modsToRemove().length;
   const dictionaries = state.dictionaries.length;
-  if (!patchesChanged() && !choicesChanged() && !addons.length && !nickelmenu && !koreader && !modsChanged && !dictionaries) return false;
+  if (!patchesChanged() && !choicesChanged() && !addons.length && !koreader && !modsChanged && !dictionaries) return false;
   return addons.every((addon) => state.addons[addon.id]) && (!patchesChanged() || !!state.firmware);
 }
 
@@ -145,7 +135,7 @@ function render() {
     $(`addon-${addon.id}`).hidden = !checked(addon.id) || isInstalled(addon.id);
   }
   const installed = state.kobo?.installed;
-  const canUndo = !!state.firmware || installed?.nickelmenu || installed?.koreader || Object.keys(installed?.mods ?? {}).length > 0;
+  const canUndo = !!state.firmware || installed?.koreader || Object.keys(installed?.mods ?? {}).length > 0;
   $("patch").disabled = !state.kobo || state.busy || !readyToPatch();
   $("undo").disabled = !state.kobo || state.busy || !canUndo;
 }
@@ -305,9 +295,6 @@ function showPatches() {
       else rows.push(patchRow(item, mine(item.id) ? onNow(item.id) : recorded().includes(item.id)));
     }
   }
-  const leftovers = LEFTOVER_ADDONS.filter((addon) => isInstalled(addon.id) && !state.items.some((item) => item.id === addon.id));
-  if (leftovers.length && !offered("addon").length) rows.push(element("h3", { textContent: "Add-ons" }));
-  for (const addon of leftovers) rows.push(patchRow(addon, true));
   $("patches").replaceChildren(...rows);
   showAllSwitches();
 }
@@ -339,7 +326,7 @@ function showSupported() {
 }
 
 function describe(kobo) {
-  const extras = [kobo.installed.nickelmenu && "NickelMenu", kobo.installed.koreader && "KOReader"].filter(Boolean);
+  const extras = [kobo.installed.koreader && "KOReader"].filter(Boolean);
   const count = kobo.installed.patches.length;
   if (count) extras.push(`${count} ${count === 1 ? "patch" : "patches"} from this page`);
   const mods = offered("mod").filter((mod) => modInstalled(mod.id));
@@ -415,8 +402,7 @@ async function loadMods(items) {
 // Kobo Patcher's patch list for this firmware, also built by `make mods`. Without it there's no mod.
 async function loadList(name) {
   try {
-    // Format 2, which the Kobo Patcher this page installs reads.
-    const response = await fetch(new URL(`mods/lists/2/${name}`, import.meta.url), { cache: "no-cache" });
+    const response = await fetch(new URL(`mods/lists/${name}`, import.meta.url), { cache: "no-cache" });
     if (!response.ok) throw new Error(`${response.status}`);
     const text = await response.text();
     return { name, text, ids: new Set(listIds(text)) };
@@ -519,6 +505,7 @@ function patch() {
     koreader: addons.includes("koreader") ? state.addons.koreader : null,
     dictionaries: state.dictionaries,
     on: chosenPatches(),
+    off: turnedOff(),
   }));
 }
 
@@ -526,7 +513,6 @@ function undo() {
   const { installed } = state.kobo;
   const lines = state.firmware ? ["Put Kobo's original system files back, which removes all patches."] : [];
   if (installed.koreader) lines.push("Delete KOReader, including its settings in .adds/koreader.");
-  if (installed.nickelmenu) lines.push("Remove NickelMenu and any custom menu entries it shows.");
   for (const id of Object.keys(installed.mods)) lines.push(`Remove the ${id} mod the next time the Kobo restarts.`);
   if (!state.firmware && recorded().length) {
     lines.push("Leave your patches in place. To remove those too, cancel and choose the firmware file first.");

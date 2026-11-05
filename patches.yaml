@@ -11,9 +11,8 @@
 # page shows them in. It can have a warning, and a group where only one in the group can be chosen.
 # Set restart: yes if Kobo Patcher on the Kobo can only make it take effect after a restart.
 # A patch can have settings too, for .kobo/Kobo/Kobo eReader.conf: each a key, "Section/name", the
-# value it gets when the patch goes on, and when_off, the one it gets when Kobo Patcher turns it off, if
-# any. The page writes the values for every ticked patch. Patches with settings only go in the
-# patch list's format 2, which older Kobo Patchers can't read.
+# value it gets when the patch goes on, and when_off, the one it gets when it's turned off, if any.
+# The page and Kobo Patcher both write them as they switch the patch.
 # It sits in `file`, and its edits are one of these:
 #   community     the title of a patch in kobopatch-patches
 #   steps         edits that fit every firmware
@@ -191,7 +190,7 @@ patches:
   - id: no-overdrive-links
     title: No library links on the home screen
     category: Ads and upsells
-    description: Stops the home screen's rotating links from suggesting OverDrive, for borrowing from a public library. Keep this off if you borrow books that way.
+    description: Stops the home screen's rotating links from suggesting OverDrive, for borrowing from a public library, and from saying a hold is ready. Keep this off if you borrow books that way.
     file: libnickel.so.1.0.0
     steps:
       - BaseAddress: "ActivityManager::smartLinkGeneralMessage(Device const&)"
@@ -286,15 +285,14 @@ patches:
     file: libnickel.so.1.0.0
     community: Allow USB storage even when device locked
 
-  # These two change the same home screen styles, so only one can be chosen. The footer-only
-  # community patch doesn't fit: its result comes out 3 bytes too big for the firmware's space.
   # Device::supportsGoogleDrive and supportsDropbox decide by model whether Kobo offers them. These
-  # make them return true, with the settings Kobo has on the models that have them.
+  # make them return true, with the settings Kobo has on the models that have them. Kobo Patcher
+  # writes the settings through Kobo's own Settings, so More follows straight away. Only offered on
+  # the Nia for now, through only_on: the Libra Colour has both already.
   - id: google-drive
     title: Google Drive in the More menu
     category: Cloud storage
     description: Turns off the device-model check that hides Google Drive, and adds the Google Drive settings.
-    restart: yes  # Kobo builds More and reads these settings as it starts
     only_on: google_drive
     file: libnickel.so.1.0.0
     steps:
@@ -309,7 +307,6 @@ patches:
     title: Dropbox in the More menu
     category: Cloud storage
     description: Turns off the device-model check that hides Dropbox, and adds the Dropbox settings.
-    restart: yes  # Kobo builds More and reads these settings as it starts
     only_on: dropbox
     file: libnickel.so.1.0.0
     steps:
@@ -320,6 +317,8 @@ patches:
       - {key: OneStoreServices/kobo_dropbox_link_account_enabled, value: "True"}
       - {key: OneStoreServices/dropbox_link_account_poll, value: "https://authorize.kobo.com/{region}/{language}/LinkDropbox"}
 
+  # These two change the same home screen styles, so only one can be chosen. The footer-only
+  # community patch doesn't fit: its result comes out 3 bytes too big for the firmware's space.
   - id: home-covers
     title: Larger home screen covers
     category: Covers

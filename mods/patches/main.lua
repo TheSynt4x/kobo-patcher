@@ -120,12 +120,34 @@ local function set_quietly(toggle, on)
 end
 
 -- A patch's settings in Kobo eReader.conf: its values going on, and its when_off values going off.
--- Only from a tap, never as the mod loads, so not from apply_choices: the page writes them over
--- USB for patches it switches, and they take effect after a restart anyway.
+-- They go through Kobo's own Settings, so Nickel follows straight away, and finish's refresh shows
+-- them. Only from a tap, never as the mod loads, so not from apply_choices: the page writes them
+-- over USB for patches it switches, and the file keeps them across a restart.
 local function write_settings(patch, on)
   for _, setting in ipairs(patch.settings or {}) do
     local value = on and setting.value or setting.when_off
     if value and not nk.device.set_setting(setting.key, value) then nk.log("couldn't write " .. setting.key) end
+  end
+end
+
+-- Kobo's sync writes some settings from what the store sends, like Google Drive's and Dropbox's,
+-- which on a model without them turns them off again. So a patch that's on puts its value back
+-- whenever one of its settings changes. At most a few times a minute for each key, in case
+-- something keeps changing it back.
+local restored = {}
+local function setting_changed(key, value)
+  if not state.firmware or not ready then return end
+  for _, patch in ipairs(state.firmware.patches) do
+    for _, setting in ipairs(patch.settings or {}) do
+      if setting.key == key and setting.value ~= value and nk.patch.state(patch.edits) == "on" then
+        restored[key] = (restored[key] or 0) + 1
+        if restored[key] == 1 then nk.after(60000, function() restored[key] = nil end) end
+        if restored[key] > 3 then return nk.log(key .. " keeps changing, so it's left as it is") end
+        nk.log(("%s changed to %s, so %s puts it back"):format(key, value or "nothing", patch.id))
+        if not nk.device.set_setting(key, setting.value) then nk.log("couldn't write " .. key) end
+        return
+      end
+    end
   end
 end
 
@@ -284,6 +306,13 @@ if not state.started then
   load_list()
 end
 nk.settings{name = "Kobo Patcher", build = build}
+
+-- Watched once, through state, so main.lua running again in development doesn't watch twice.
+state.setting_changed = setting_changed
+if not state.watching_settings then
+  state.watching_settings = true
+  nk.device.on_setting(function(key, value) state.setting_changed(key, value) end)
+end
 
 -- Keyboards in your languages and a filter for them in My Books.
 languages.start()

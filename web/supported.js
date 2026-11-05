@@ -75,8 +75,8 @@ export function registryFor(model, firmware) {
   return REGISTRY.filter((item) => item.targets[model]?.includes(firmware));
 }
 
-// Dictionaries the page links to, for languages Kobo has none for: reader.dict's, made from
-// Wiktionary, at FILE with the language twice. Only the languages it has a Kobo file for.
+// Dictionaries the page links to: reader.dict's, made from Wiktionary, free, and for languages Kobo
+// has none for too. At file(), with the language twice. Only the languages it has a Kobo file for.
 export const DICTIONARIES = {
   file: (language) => `https://www.reader-dict.com/file/${language}/dicthtml-${language}-${language}.zip`,
   languages: ["bg", "ca", "cs", "da", "de", "el", "en", "eo", "es", "fi", "fr", "it", "ja", "jbo", "ko", "lt", "nl", "pl",

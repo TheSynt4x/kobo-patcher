@@ -8,10 +8,9 @@
 --   edit	<file>	<offset>	<Kobo's bytes>	<the patch's bytes>
 --   setting	<Section/name>	<value>	<value when it's turned off, or ->
 --
--- Format 1 is the same without setting lines, and is still read.
 local list = {}
 
-local FORMATS = {["1"] = true, ["2"] = true}
+local FORMAT = "2"
 local MAX_SETTINGS = 16
 local MAX_VALUE = 512
 local MAX_BYTES = 1 << 20
@@ -58,7 +57,7 @@ function list.parse(text)
     local fields = split(line)
     local kind = fields[1]
     if number == 1 then
-      if #fields ~= 2 or kind ~= "kobo-patcher-list" or not FORMATS[fields[2]] then
+      if #fields ~= 2 or kind ~= "kobo-patcher-list" or fields[2] ~= FORMAT then
         return nil, "it isn't a patch list this mod can read"
       end
     elseif number == 2 then

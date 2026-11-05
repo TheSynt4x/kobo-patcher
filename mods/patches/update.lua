@@ -7,13 +7,12 @@
 --
 --   kobo-patcher-manifest	1
 --   mod	<sha512>	<size>	<model-firmware,...>	<version>     the Kobos the mod updates itself on
---   list	<model-firmware>	<sha512>	<size>
+--   list	<model-firmware>	<sha512>	<size>     the patch list, in lists/
 local update = {}
 
 -- This mod's version. A mod is only offered when the manifest's is higher, so a newer build is
 -- never replaced by an older one, as one built from a branch would be by the site's. Raise it
 -- with each change to the mod that should reach Kobos: tools/sign_mods.mjs reads it from here.
--- The C mod before this one was 1, and its manifests had no version.
 update.VERSION = 4
 
 -- The public half of the key tools/sign_mods.mjs signs with.
@@ -32,18 +31,16 @@ local function fields_of(line)
   return fields
 end
 
--- {mod = {hash, size, targets}, lists = {[model-firmware] = {hash, size}}, lists2 = the same in format
--- 2}. Lines that can't be read are left out, and the first of each kind counts.
+-- {mod = {hash, size, targets, version}, lists = {[model-firmware] = {hash, size}}}. Lines that
+-- can't be read are left out, and the first of each kind counts.
 function update.parse_manifest(text)
-  local manifest = {lists = {}, lists2 = {}}
+  local manifest = {lists = {}}
   for line in text:gmatch("[^\n]+") do
     local f = fields_of(line)
     if #f >= 4 and f[1] == "mod" and #f[2] == 128 and not manifest.mod then
       manifest.mod = {hash = f[2], size = tonumber(f[3]), targets = f[4], version = tonumber(f[5] or "")}
     elseif #f >= 4 and f[1] == "list" and #f[3] == 128 and not manifest.lists[f[2]] then
       manifest.lists[f[2]] = {hash = f[3], size = tonumber(f[4])}
-    elseif #f >= 4 and f[1] == "list2" and #f[3] == 128 and not manifest.lists2[f[2]] then
-      manifest.lists2[f[2]] = {hash = f[3], size = tonumber(f[4]), path = "lists/2/" .. f[2] .. ".txt"}
     end
   end
   return manifest
@@ -54,7 +51,7 @@ function update.matches(data, entry)
   return data ~= nil and entry ~= nil and #data == entry.size and nk.crypto.sha512(data) == entry.hash
 end
 
--- Whether the manifest's mod is a later version than this one. One without a version isn't.
+-- Whether the manifest's mod is a later version than this one.
 function update.newer(mod)
   return mod ~= nil and mod.version ~= nil and mod.version > update.VERSION
 end
@@ -110,16 +107,15 @@ local function run(status, name, list_changed)
   if not update.signed(text, signature) then return "The update didn't check out, so it wasn't used." end
   local manifest = update.parse_manifest(text)
 
-  -- The list for this firmware, in format 2 where the site has it. It's kept as lists/<name>.txt
-  -- either way.
-  local entry, path, result = manifest.lists2[name] or manifest.lists[name], "lists/" .. name .. ".txt", nil
+  -- The list for this firmware, kept where it is on the site, as lists/<name>.txt.
+  local entry, path, result = manifest.lists[name], "lists/" .. name .. ".txt", nil
   if not entry then
     result = "There are no patches for this firmware yet."
   elseif update.matches(nk.file.read(path), entry) then
     result = "Everything is up to date."
   else
     say("Downloading patches...")
-    local data = get(entry.path or path)
+    local data = get(path)
     if not data then return "The patch list couldn't be downloaded. Try again later." end
     if not update.matches(data, entry) then return "The download didn't match what was expected, so it wasn't used." end
     if not nk.file.write(path, data) then return "The patch list couldn't be saved. Check there's free space." end

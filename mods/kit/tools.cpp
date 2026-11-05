@@ -11,6 +11,8 @@
  *
  * As in lua.cpp, nothing raises a Lua error while a Qt value made here is still alive. */
 #include <QLocale>
+#include <QCoreApplication>
+#include <QEvent>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -25,7 +27,6 @@
 #include <QNetworkRequest>
 #include <QPair>
 #include <QRegularExpression>
-#include <QSettings>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -864,33 +865,174 @@ static int l_firmware(lua_State *co) {
     return 1;
 }
 
-/* nk.device.setting(key): one of Kobo's own settings, from .kobo/Kobo/Kobo eReader.conf, as a
- * string, or nil when it isn't set. key is "Section/name". Opened as Nickel opens it, through a
- * default QSettings, so it's the same file, and QSettings merges a write into it. Only once
- * Nickel is running: never from main.lua's top level. */
-static int l_setting(lua_State *co) {
-    QSettings settings;
-    QVariant value = settings.value(QString::fromUtf8(luaL_checkstring(co, 1)));
-    if (!value.isValid()) {
-        lua_pushnil(co);
-        return 1;
+/* Kobo's own settings, in .kobo/Kobo/Kobo eReader.conf, go through its Settings class: it keeps
+ * them in memory for all of Nickel, writes the file, and tells Nickel what changed with a
+ * SettingEvent, which screens like More listen for. Each section is a subclass that only gives its
+ * name, through the virtual sectionName, so the kit's is a plain Settings on a copy of its vtable
+ * whose sectionName gives the section asked for. */
+class Device {
+public:
+    static Device &getCurrentDevice();
+};
+
+class Settings {
+public:
+    Settings(const Device &device, bool deferred);
+    ~Settings();
+    QVariant getSetting(const QString &key, const QVariant &otherwise);
+    void saveSetting(const QString &key, const QVariant &value, bool force);
+    void removeSetting(const QString &key);
+};
+
+extern void *settings_vtable[] __asm__("_ZTV8Settings");
+extern void settings_section_name() __asm__("_ZNK8Settings11sectionNameEv");
+
+/* Settings' vtable: offset and type, then the two destructors, two more, and sectionName. */
+enum { SETTINGS_VTABLE_WORDS = 7, SECTION_NAME_SLOT = 6 };
+
+/* Only ever used on Nickel's main thread, for the length of one call. */
+static QLatin1String section_now("");
+
+static const QLatin1String *section_name(const void *) { return &section_now; }
+
+/* A Settings for key's section, made in memory, which has room for Nickel's 0x1c bytes. Or 0 when
+ * the key isn't "Section/name", or Settings isn't what's expected. section and name get its parts. */
+static Settings *open_settings(void *memory, const QByteArray &key, QByteArray *section, QString *name) {
+    static void **vtable;
+    if (!vtable) {
+        if (settings_vtable[SECTION_NAME_SLOT] != reinterpret_cast<void *>(&settings_section_name)) {
+            nk_log("Kobo's Settings isn't what's expected, so its settings are left alone");
+            return 0;
+        }
+        vtable = static_cast<void **>(malloc(sizeof *vtable * SETTINGS_VTABLE_WORDS));
+        memcpy(vtable, settings_vtable, sizeof *vtable * SETTINGS_VTABLE_WORDS);
+        vtable[SECTION_NAME_SLOT] = reinterpret_cast<void *>(&section_name);
     }
-    QByteArray text = value.toString().toUtf8();
-    lua_pushlstring(co, text.constData(), text.size());
+    int slash = key.indexOf('/');
+    if (slash < 1 || slash == key.size() - 1) return 0;
+    *section = key.left(slash);
+    *name = QString::fromUtf8(key.mid(slash + 1));
+    section_now = QLatin1String(section->constData(), section->size());
+    Settings *settings = new (memory) Settings(Device::getCurrentDevice(), false);
+    *reinterpret_cast<void ***>(settings) = vtable + 2;
+    return settings;
+}
+
+static void close_settings(Settings *settings) {
+    settings->~Settings();
+    section_now = QLatin1String("");
+}
+
+/* nk.device.setting(key): one of Kobo's own settings, as a string, or nil when it isn't set. key is
+ * "Section/name". It's Nickel's value, as it has it in memory. Only once Nickel is running: never
+ * from main.lua's top level. */
+static int l_setting(lua_State *co) {
+    const char *key = luaL_checkstring(co, 1);
+    bool found = false;
+    QByteArray text;
+    {
+        alignas(8) char memory[64];
+        QByteArray section;
+        QString name;
+        Settings *settings = open_settings(memory, key, &section, &name);
+        if (settings) {
+            QVariant value = settings->getSetting(name, QVariant());
+            close_settings(settings);
+            found = value.isValid();
+            text = value.toString().toUtf8();
+        }
+    }
+    if (found) lua_pushlstring(co, text.constData(), text.size());
+    else lua_pushnil(co);
     return 1;
 }
 
 /* nk.device.set_setting(key, value): sets one of Kobo's settings, or removes it when value is nil,
- * and writes the file straight away. Returns whether it was written. Kobo reads most of its
- * settings when it starts, so what they change usually shows after a restart. */
+ * the way Nickel does: in its memory, in the file straight away, and with a SettingEvent, so what
+ * listens for it follows. Returns whether it was set. Only from a tap or another callback, never
+ * from main.lua's top level. */
 static int l_set_setting(lua_State *co) {
-    QString key = QString::fromUtf8(luaL_checkstring(co, 1));
-    QSettings settings;
-    if (lua_isnoneornil(co, 2)) settings.remove(key);
-    else settings.setValue(key, QString::fromUtf8(luaL_checkstring(co, 2)));
-    settings.sync();
-    lua_pushboolean(co, settings.status() == QSettings::NoError);
+    const char *key = luaL_checkstring(co, 1);
+    const char *value = lua_isnoneornil(co, 2) ? 0 : luaL_checkstring(co, 2);
+    bool ok = false;
+    {
+        alignas(8) char memory[64];
+        QByteArray section;
+        QString name;
+        Settings *settings = open_settings(memory, key, &section, &name);
+        if (settings) {
+            /* Forced, because the file may have changed over USB since Nickel last read it. */
+            if (value) settings->saveSetting(name, QString::fromUtf8(value), true);
+            else settings->removeSetting(name);
+            close_settings(settings);
+            ok = true;
+        }
+    }
+    lua_pushboolean(co, ok);
     return 1;
+}
+
+/* What Settings posts to the application after each change, Nickel's own and the kit's. */
+class SettingEvent {
+public:
+    static int eventType();
+    QString section() const;
+    QString key() const;
+    QVariant value() const;
+};
+
+static QList<int> *setting_watchers;
+
+/* Sees every event the application gets, and passes on SettingEvents. It never takes one. */
+class SettingWatch : public QObject {
+public:
+    bool eventFilter(QObject *, QEvent *event) {
+        static int type = SettingEvent::eventType();
+        if (event->type() != type) return false;
+        const SettingEvent *change = reinterpret_cast<const SettingEvent *>(event);
+        QByteArray key = (change->section() + QLatin1Char('/') + change->key()).toUtf8(), value;
+        QVariant was = change->value();
+        bool removed = !was.isValid();
+        if (!removed) value = was.toString().toUtf8();
+        QList<int> watchers = *setting_watchers;
+        for (int i = 0; i < watchers.size(); i++) {
+            lua_State *co = kit_task(watchers[i]);
+            lua_pushlstring(co, key.constData(), key.size());
+            if (removed) lua_pushnil(co);
+            else lua_pushlstring(co, value.constData(), value.size());
+            kit_resume(co, 2);
+        }
+        return false;
+    }
+};
+
+/* Once Nickel's event loop runs, never while the mod loads. */
+static void watch_settings(void *) {
+    QCoreApplication::instance()->installEventFilter(new SettingWatch);
+    nk_log("watching Kobo's settings");
+}
+
+/* nk.device.on_setting(fn): fn(key, value) runs after each change to one of Kobo's settings, by
+ * Nickel or a mod, such as Kobo's sync writing what the store sends. key is "Section/name", and value
+ * is a string, or nil when the setting was removed. It runs after the change, so setting it again
+ * from fn wins, and that change comes back to fn too. From main.lua's top level it only records fn:
+ * watching starts once Nickel is running. */
+static int l_on_setting(lua_State *co) {
+    int fn = kit_ref(co, 1);
+    if (!setting_watchers) {
+        if (!QCoreApplication::instance()) {
+            nk_log("no Qt application, so Kobo's settings can't be watched");
+            return 0;
+        }
+        setting_watchers = new QList<int>;
+        QTimer *soon = new QTimer();
+        soon->setSingleShot(true);
+        kit_connect(soon, &QTimer::timeout, &QTimer::staticMetaObject, watch_settings, 0);
+        QObject::connect(soon, &QTimer::timeout, soon, &QObject::deleteLater);
+        soon->start(0);
+    }
+    setting_watchers->append(fn);
+    return 0;
 }
 
 /* ---- the mod's own file ---- */
@@ -946,7 +1088,7 @@ void kit_open_tools(lua_State *L) {
     static const luaL_Reg crypto_functions[] = {{"md5", l_md5}, {"sha1", l_sha1}, {"sha256", l_sha256}, {"sha512", l_sha512},
                                                 {"ed25519_verify", l_ed25519_verify}, {0, 0}};
     static const luaL_Reg device_functions[] = {{"model", l_model}, {"firmware", l_firmware}, {"setting", l_setting},
-                                                {"set_setting", l_set_setting}, {0, 0}};
+                                                {"set_setting", l_set_setting}, {"on_setting", l_on_setting}, {0, 0}};
     static const luaL_Reg text_functions[] = {{"lower", l_lower}, {"decompose", l_decompose}, {"language_name", l_language_name}, {0, 0}};
     add_library(L, "http", http_functions);
     add_library(L, "re", re_functions);

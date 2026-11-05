@@ -174,7 +174,6 @@ test("a package can merge several files, and only holds what was chosen", async 
   assert.deepEqual(onlyMod.settings, []);
   assert.deepEqual(onlyMod.record, { mods: { patches: "abc" } });
   assert.throws(() => planPatch(null, ["google-drive"]), Refused);
-  // KOReader no longer needs NickelMenu: Kobo Patcher starts it from More.
   assert.deepEqual(planPatch(null, [], { koreader: {} }).files, []);
   assert.equal(planUndo({ libnickel: nickel }, {}).files[0].data, nickel);
   assert.deepEqual(planPatch({ libnickel: nickel }, []).record, { patches: [], mods: {} });
@@ -287,7 +286,7 @@ for (const build of FIRMWARE) {
 }
 
 test("removing an add-on needs no firmware and leaves the system files alone", () => {
-  const remove = { koreader: true, nickelmenu: false };
+  const remove = { koreader: true };
   const plan = planPatch(null, [], { remove });
   assert.deepEqual(plan.files, []);
   assert.equal(plan.remove, remove);
@@ -323,6 +322,11 @@ test("a patch's settings are written whenever it's ticked, even when Kobo Patche
   assert.deepEqual(plan.settings.map(([section, key]) => `${section}/${key}`),
     ["FeatureSettings/Dropbox", "OneStoreServices/kobo_dropbox_link_account_enabled", "OneStoreServices/dropbox_link_account_poll"]);
   assert.deepEqual(planPatch(null, [], { on: [] }).settings, []);
+});
+
+test("a patch turned off gets its when_off values, as in Kobo Patcher, and only those", () => {
+  assert.deepEqual(planPatch(null, [], { on: [], off: ["dropbox"] }).settings, [["FeatureSettings", "Dropbox", "0"]]);
+  assert.deepEqual(planPatch(null, [], { on: ["dropbox"], off: ["dropbox"] }).settings.length, 3);
 });
 
 test("setConf keeps the line ending when it replaces a value in a CRLF file", () => {
@@ -508,14 +512,6 @@ test("removing a mod leaves its uninstall file and keeps the patches, and Undo r
   assert.ok(await readFake(kobo, ".adds/patches/uninstall"));
   assert.equal(await readFake(kobo, ".adds/kobo-patcher.json"), null);
   assert.ok(await readFake(kobo, ".kobo/KoboRoot.tgz"));
-});
-
-test("a record from before mods were offered still reads", async () => {
-  const kobo = await fakeKobo({ ".adds/kobo-patcher.json": JSON.stringify({ firmware: "4.38.23852", patches: ["margins"] }) });
-  const { installed } = await inspectKobo(kobo);
-  assert.deepEqual([installed.patches, installed.mods], [["margins"], {}]);
-  await writeToKobo(kobo, planPatch(null, [], { mods: [MOD] }));
-  assert.deepEqual(await readRecord(kobo), { firmware: "4.38.23852", patches: ["margins"], mods: { patches: "abc" } });
 });
 
 test("a dictionary is checked, named for its language, and copied to custom-dict, which Undo leaves", async () => {

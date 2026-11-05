@@ -43,6 +43,7 @@ export const COMPILED_PATCHES = [
     "description": "Always shows Kobo's confirmation before an update, so a silent update can't remove these patches.",
     "group": "updates",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -62,6 +63,7 @@ export const COMPILED_PATCHES = [
     "warning": "You won't get security fixes or new features until you remove this patch.",
     "group": "updates",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -79,6 +81,7 @@ export const COMPILED_PATCHES = [
     "title": "Finer margins",
     "description": "Makes the margin slider go up in smaller steps, from 0 to 8% of the screen width.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -96,6 +99,7 @@ export const COMPILED_PATCHES = [
     "title": "More small font sizes",
     "description": "Adds finer steps at small sizes. The largest sizes go away, so skip this if you read very large text.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -113,6 +117,7 @@ export const COMPILED_PATCHES = [
     "title": "Narrower line spacing",
     "description": "Replaces the line spacing slider with 10 values from 0.8 to 1.1, instead of 15 that go much wider.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -130,6 +135,7 @@ export const COMPILED_PATCHES = [
     "title": "No recommendation or store tiles on the home screen",
     "description": "Hides the tiles with recommendations, top picks, your wishlist, and the Quick Tour at the top, which show when fewer than 2 books are open.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -147,6 +153,7 @@ export const COMPILED_PATCHES = [
     "title": "Home's empty tile opens My Books",
     "description": "When no book is open, Home's \"Need something to read?\" tile opens your books instead of the store, without the shop's name or first-purchase offers.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -164,6 +171,7 @@ export const COMPILED_PATCHES = [
     "title": "No store links on the home screen",
     "description": "Stops the home screen's rotating links from offering Kobo Plus, the store, your wishlist, Super Points and audiobooks. Tips and reading stats stay.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -179,8 +187,9 @@ export const COMPILED_PATCHES = [
     "kind": "patch",
     "category": "Ads and upsells",
     "title": "No library links on the home screen",
-    "description": "Stops the home screen's rotating links from suggesting OverDrive, for borrowing from a public library. Keep this off if you borrow books that way.",
+    "description": "Stops the home screen's rotating links from suggesting OverDrive, for borrowing from a public library, and from saying a hold is ready. Keep this off if you borrow books that way.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -198,6 +207,7 @@ export const COMPILED_PATCHES = [
     "title": "No Instapaper suggestions on the home screen",
     "description": "Stops the home screen suggesting Instapaper, in its links and in a pop-up. Once you're signed in to it, the link to your unread articles stays.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -215,6 +225,7 @@ export const COMPILED_PATCHES = [
     "title": "No Kobo Plus pop-up on the home screen",
     "description": "Stops Home showing Kobo Plus offers in a pop-up.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -232,6 +243,7 @@ export const COMPILED_PATCHES = [
     "title": "No recommendations at the end of a book",
     "description": "Hides the books Kobo suggests after the last page. Your rating and review stay.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -249,6 +261,7 @@ export const COMPILED_PATCHES = [
     "title": "No Discover button",
     "description": "Hides Discover, with Kobo Plus and the store, from the bottom bar. Your books and Google Drive stay.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -266,6 +279,7 @@ export const COMPILED_PATCHES = [
     "title": "No My Wishlist or My Articles",
     "description": "Hides both from the More page. Everything else on that page stays.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -284,6 +298,7 @@ export const COMPILED_PATCHES = [
     "description": "Lets a locked Kobo connect as a USB drive if it's plugged in while the sleep screen is showing.",
     "warning": "This makes the lock screen PIN useless for protecting your books and sign-ins.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -317,6 +332,13 @@ export const COMPILED_PATCHES = [
         "https://authorize.kobo.com/{region}/{language}/linkcloudstorage/provider/google_drive"
       ]
     ],
+    "offSettings": [
+      [
+        "FeatureSettings",
+        "GoogleDrive",
+        "0"
+      ]
+    ],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -347,6 +369,13 @@ export const COMPILED_PATCHES = [
         "https://authorize.kobo.com/{region}/{language}/LinkDropbox"
       ]
     ],
+    "offSettings": [
+      [
+        "FeatureSettings",
+        "Dropbox",
+        "0"
+      ]
+    ],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -362,6 +391,7 @@ export const COMPILED_PATCHES = [
     "description": "Reduces the home screen's margins so covers can be bigger.",
     "group": "home-layout",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -380,6 +410,7 @@ export const COMPILED_PATCHES = [
     "description": "Removes the row that says \"Find your next book in Kobo Plus or our store\", and makes covers bigger.",
     "group": "home-layout",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -397,6 +428,7 @@ export const COMPILED_PATCHES = [
     "title": "Larger library covers",
     "description": "Increases the cover thumbnails in the My Books list.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -414,6 +446,7 @@ export const COMPILED_PATCHES = [
     "title": "More room in the dictionary pop-up",
     "description": "Trims the pop-up's header, footer and margins to leave more space for definitions.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
@@ -431,6 +464,7 @@ export const COMPILED_PATCHES = [
     "title": "Dictionaries for every book language",
     "description": "Picks a dictionary by the book's own language, even one Kobo doesn't list. Without one it uses the usual dictionary.",
     "settings": [],
+    "offSettings": [],
     "needsFirmware": true,
     "targets": {
       "N306": [
