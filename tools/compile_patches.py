@@ -365,8 +365,7 @@ def steps_for(patch, version, sources):
     return patch["per_firmware"][version]
 
 
-def main():
-    spec = yaml.safe_load((REPO / "patches.yaml").read_text())
+def check_spec(spec):
     for patch in spec["patches"]:
         if patch.get("category") not in spec["categories"]:
             raise SystemExit(f"{patch['id']}: category has to be one of {', '.join(spec['categories'])}")
@@ -379,11 +378,17 @@ def main():
     for category in spec.get("all_switch", []):
         if category not in spec["categories"]:
             raise SystemExit(f"all_switch: {category} isn't one of the categories")
+
+
+def compile_spec(spec):
+    """Each firmware's edits for spec's patches. Returns {(model, version): (edits by id, cached ids)},
+    each patch's targets, and the firmware with its hashes."""
+    check_spec(spec)
     folder = community_folder(spec["community_patches"]["ref"], spec["community_patches"]["version"])
     sources = {name: load_patches(folder, name) for name in FILES}
-    out = REPO / "web/patches"
     targets = {patch["id"]: {} for patch in spec["patches"]}
     firmware_list = []
+    compiled = {}
     for build in spec["firmware"]:
         model, version = build["model"], build["firmware"]
         print(f"{model} {version}")
@@ -419,6 +424,15 @@ def main():
             if any(binaries[name].runs_once(at) for at, _, _ in edits):
                 cached.append(patch["id"])
             print(f"  ok {patch['id']}: {len(edits)} edits{' (keeps a value: may need a restart)' if patch['id'] in cached else ''}")
+        compiled[(model, version)] = (result, cached)
+    return compiled, targets, firmware_list
+
+
+def main():
+    spec = yaml.safe_load((REPO / "patches.yaml").read_text())
+    compiled, targets, firmware_list = compile_spec(spec)
+    out = REPO / "web/patches"
+    for (model, version), (result, cached) in compiled.items():
         (out / f"{model}-{version}.json").write_text(json.dumps(result, indent=1) + "\n")
         (out / f"{model}-{version}.cached.json").write_text(json.dumps(cached) + "\n")
     offered = []

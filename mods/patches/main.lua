@@ -69,22 +69,69 @@ local function list_path() return ("lists/%s-%s.txt"):format(model, version) end
 
 -- Reads the list again if the file has changed since it was last read, and makes the saved
 -- choices for any patches that are new to it. A list that can't be read leaves the last one.
+-- Packs' lists, which the page puts in lists/custom as <pack>-<model>-<firmware>.txt: {pack, text}
+-- for each one for this firmware, by name.
+local CUSTOM = "lists/custom"
+
+local function pack_lists()
+  local suffix, found = ("-%s-%s.txt"):format(model, version), {}
+  for _, name in ipairs(nk.file.list(CUSTOM)) do
+    if #name > #suffix and name:sub(-#suffix) == suffix then
+      local text = nk.file.read(CUSTOM .. "/" .. name)
+      if text then found[#found + 1] = {pack = name:sub(1, -#suffix - 1), text = text} end
+    end
+  end
+  table.sort(found, function(a, b) return a.pack < b.pack end)
+  return found
+end
+
+local function for_here(loaded, why)
+  if loaded and (loaded.model ~= model or loaded.version ~= version) then
+    return nil, "the patch list is for another Kobo or firmware"
+  end
+  return loaded, why
+end
+
+-- A pack's patches go after Kobo Patcher's own. Each has to be named <pack>.something, so a pack
+-- can't stand in for another's patches or Kobo Patcher's. A pack's list that can't be read is left
+-- out, and the rest still work.
+local function add_packs(loaded, packs)
+  local ids = {}
+  for _, patch in ipairs(loaded.patches) do ids[patch.id] = true end
+  for _, each in ipairs(packs) do
+    local extra, why = for_here(list.parse(each.text))
+    if not extra then
+      nk.log(("%s's patches not read: %s"):format(each.pack, why))
+    else
+      for _, patch in ipairs(extra.patches) do
+        if patch.id:sub(1, #each.pack + 1) ~= each.pack .. "." or ids[patch.id] then
+          nk.log(("%s's patch %s left out: it isn't named %s.something, or is there twice"):format(each.pack, patch.id, each.pack))
+        else
+          ids[patch.id] = true
+          patch.all = false
+          loaded.patches[#loaded.patches + 1] = patch
+        end
+      end
+    end
+  end
+end
+
 local function load_list()
   local text = nk.file.read(list_path())
   if not text then
     if not state.firmware then state.list_error = "there's no patch list for this firmware" end
     return
   end
-  if state.firmware and text == state.list_text then return end
-  state.list_text = text
-  local loaded, why = list.parse(text)
-  if loaded and (loaded.model ~= model or loaded.version ~= version) then
-    loaded, why = nil, "the patch list is for another Kobo or firmware"
-  end
+  local packs, all = pack_lists(), text
+  for _, each in ipairs(packs) do all = all .. "\0" .. each.pack .. "\0" .. each.text end
+  if state.firmware and all == state.list_text then return end
+  state.list_text = all
+  local loaded, why = for_here(list.parse(text))
   if not loaded then
     state.list_error = why
     return nk.log("patch list not read: " .. why)
   end
+  add_packs(loaded, packs)
   state.firmware, state.list_error = loaded, nil
   nk.log(("read %d patches for %s %s"):format(#loaded.patches, model, version))
   if ready then apply_choices() end

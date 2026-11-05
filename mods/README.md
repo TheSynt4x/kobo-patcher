@@ -28,6 +28,18 @@ Build it with `mods/build.sh <folder>`, which needs zig 0.17.0, curl the first t
 
 A crash after a screen has opened isn't caught.
 
+## Packs: your own mods and patches, added on the page
+
+A pack is a zip of your own mods and patches, which anyone can add to their Kobo on the page, under "Your own mods and patches". `tools/pack.py` makes one:
+
+```sh
+python3 tools/pack.py mine.zip --id mine --name "My stuff" --author me --mod path/to/mod --patches my-patches.yaml
+```
+
+`--mod` is a mod's folder, built with `build.sh`, or a `.so` already built, and can be given more than once. `--patches` is a `patches.yaml` with only a `patches:` list, in this repo's format. Its patches are compiled for this repo's firmware, named `<pack>.<id>`, and shown in Kobo Patcher under the pack's name. The zip's `kobo-pack.txt` lists every file with its SHA-256 and size; `tools/pack.py` describes it.
+
+The page checks a pack whole before offering it, and only uses what's for the Kobo that's connected. Its mods go in as the page's own do, under `imageformats`. Its patches go in `.adds/patches/lists/custom/<pack>-<model>-<firmware>.txt`, which Kobo Patcher reads beside its own list, with the same checks, so a pack's patches need Kobo Patcher. A pack can't use the page's own ids, and its patches have to be named after it. The page's record notes what came from each pack, so unticking it, or Undo, takes it all off. A newer zip replaces the older one. Packs aren't signed: the page says to add only ones from people you trust.
+
 ## Developing on a Kobo
 
 `devtools/` is a mod for developing on a real Kobo, driven from the computer over Wi-Fi with `tools/kobo`: tap and swipe, what's on screen with its text and places, screenshots, every mod's log and Nickel's crashes, files and a shell, pushing a Lua mod's changed scripts without a rebuild, and running whole scenarios of steps. Anyone with its token is root on the Kobo, so it's only for your own Kobo on your own Wi-Fi. See [devtools/README.md](devtools/README.md).

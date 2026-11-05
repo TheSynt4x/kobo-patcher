@@ -1,6 +1,6 @@
 import {
   Refused, UnsupportedFirmware, inspectKobo, koboSerial, listIds, writeFullBackup, planPatch, planUndo, readBackup, readFirmware,
-  readDictionary, readKOReader, sha256, writeToKobo,
+  readDictionary, readKOReader, readPack, sha256, writeToKobo,
 } from "./patcher.js";
 import {
   ALL_SWITCH, CATEGORIES, DICTIONARIES, FIRMWARE, FIRMWARE_LIST_URL, KOREADER, MODEL_NAMES, firmwareRequestUrl, firmwareSearchUrl, registryFor,
@@ -13,7 +13,7 @@ const ADDON_FILES = {
 const $ = (id) => document.getElementById(id);
 const canWrite = "showDirectoryPicker" in window && "showSaveFilePicker" in window;
 const state = {
-  drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {}, mods: {}, list: null, riskAccepted: false, dictionaries: [],
+  drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, busy: false, addons: {}, mods: {}, list: null, riskAccepted: false, dictionaries: [], packs: [],
 };
 
 function say(id, text, kind = "") {
@@ -31,6 +31,20 @@ function offered(kind) {
 
 function chosenPatches() {
   return offered("patch").filter((patch) => checked(patch.id)).map((patch) => patch.id);
+}
+
+// Packs: the ones on the Kobo, from the record, and the ones chosen here. Each has a row, ticked to
+// keep or add it, unticked to take it off.
+function installedPacks() {
+  return state.kobo?.installed.packs ?? {};
+}
+
+function packsToAdd() {
+  return state.packs.filter((pack) => $(`pack-${pack.id}`)?.checked);
+}
+
+function packsToRemove() {
+  return Object.keys(installedPacks()).filter((id) => !$(`pack-${id}`)?.checked);
 }
 
 // Patches with settings that are on now, however they were put on, and unticked.
@@ -102,7 +116,8 @@ function readyToPatch() {
   const { koreader } = addonsToRemove();
   const modsChanged = modsToInstall().length || modsToRemove().length;
   const dictionaries = state.dictionaries.length;
-  if (!patchesChanged() && !choicesChanged() && !addons.length && !koreader && !modsChanged && !dictionaries) return false;
+  const packs = packsToAdd().length || packsToRemove().length;
+  if (!patchesChanged() && !choicesChanged() && !addons.length && !koreader && !modsChanged && !dictionaries && !packs) return false;
   return addons.every((addon) => state.addons[addon.id]) && (!patchesChanged() || !!state.firmware);
 }
 
@@ -122,6 +137,8 @@ function render() {
   $("backup").disabled = !state.drive || state.busy;
   $("firmware").disabled = state.busy || !state.kobo;
   $("dictionary-files").disabled = state.busy || !state.kobo;
+  $("pack-files").disabled = state.busy || !state.kobo;
+  for (const box of document.querySelectorAll("#pack-rows input")) box.disabled = state.busy;
   for (const box of document.querySelectorAll("#patches input")) box.disabled = state.busy;
   showAllSwitches();
   if ($("via-kobopatcher")) $("via-kobopatcher").hidden = !viaKoboPatcher();
@@ -135,7 +152,8 @@ function render() {
     $(`addon-${addon.id}`).hidden = !checked(addon.id) || isInstalled(addon.id);
   }
   const installed = state.kobo?.installed;
-  const canUndo = !!state.firmware || installed?.koreader || Object.keys(installed?.mods ?? {}).length > 0;
+  const canUndo = !!state.firmware || installed?.koreader || Object.keys(installed?.mods ?? {}).length > 0
+    || Object.keys(installed?.packs ?? {}).length > 0;
   $("patch").disabled = !state.kobo || state.busy || !readyToPatch();
   $("undo").disabled = !state.kobo || state.busy || !canUndo;
 }
@@ -369,8 +387,10 @@ async function selectKobo() {
       // KOReader needs Kobo Patcher's row in More, so it goes when Kobo Patcher isn't offered.
       const kept = items.filter((item) => (item.kind !== "mod" || mods[item.id]) && (item.id !== "koreader" || mods.patches));
       Object.assign(state, { root, kobo, edits, mods, list, items: kept });
+      state.packs = [];
       showFirmwareLinks();
       showPatches();
+      showPacks();
       say("kobo-status", describe(kobo), "good");
     } catch (error) {
       say("kobo-status", explain(error), "bad");
@@ -470,9 +490,12 @@ async function run(makePlan) {
 
       say("run-status", "Writing to the Kobo…");
       await writeToKobo(state.root, plan, (text) => say("run-status", text));
-      Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, addons: {}, mods: {}, list: null, dictionaries: [] });
+      Object.assign(state, { drive: null, root: null, kobo: null, items: [], edits: {}, firmware: null, addons: {}, mods: {}, list: null, dictionaries: [], packs: [] });
       $("dictionary-files").value = "";
       say("dictionary-status", "");
+      $("pack-files").value = "";
+      say("pack-status", "");
+      $("pack-rows").replaceChildren();
       $("patches").replaceChildren();
       showFirmwareLinks();
       say("kobo-status", "");
@@ -493,11 +516,24 @@ async function run(makePlan) {
 function patch() {
   const addons = chosenAddons().map((addon) => addon.id);
   const changed = patchesChanged();
+  // Choices for patches the page doesn't show, a pack's, stay as Kobo Patcher has them.
   const mod = viaKoboPatcher() ? {
     list: state.list,
-    choices: Object.fromEntries([...state.list.ids].map((id) => [id, checked(id)])),
+    choices: {
+      ...Object.fromEntries(Object.entries(state.kobo.installed.choices).filter(([id]) => !state.list.ids.has(id))),
+      ...Object.fromEntries([...state.list.ids].map((id) => [id, checked(id)])),
+    },
   } : null;
+  const adding = packsToAdd();
+  const needsKoboPatcher = adding.find((pack) => pack.list) && !checked("patches");
+  if (needsKoboPatcher) {
+    say("run-status", `${needsKoboPatcher.name}'s patches need Kobo Patcher. Tick it above, or untick the pack.`, "bad");
+    return;
+  }
   run(() => planPatch(changed ? state.firmware : null, changed ? forFiles(chosenPatches()) : [], {
+    packs: adding,
+    removePacks: packsToRemove(),
+    installedPacks: installedPacks(),
     edits: state.edits,
     remove: { ...addonsToRemove(), mods: modsToRemove() },
     mods: modsToInstall(),
@@ -514,6 +550,7 @@ function undo() {
   const lines = state.firmware ? ["Put Kobo's original system files back, which removes all patches."] : [];
   if (installed.koreader) lines.push("Delete KOReader, including its settings in .adds/koreader.");
   for (const id of Object.keys(installed.mods)) lines.push(`Remove the ${id} mod the next time the Kobo restarts.`);
+  for (const pack of Object.values(installed.packs ?? {})) if (pack.list) lines.push(`Remove ${pack.name}'s patches.`);
   if (!state.firmware && recorded().length) {
     lines.push("Leave your patches in place. To remove those too, cancel and choose the firmware file first.");
   }
@@ -543,6 +580,7 @@ function dropZone(zone, choose) {
 }
 dropZone($("drop"), ([file]) => chooseFirmware(file));
 dropZone($("dictionary-drop"), chooseDictionaries);
+dropZone($("pack-drop"), choosePacks);
 $("firmware").addEventListener("change", (event) => {
   const [file] = event.target.files;
   if (file) chooseFirmware(file);
@@ -586,6 +624,52 @@ async function chooseDictionaries(files) {
   render();
 }
 $("dictionary-files").addEventListener("change", (event) => chooseDictionaries([...event.target.files]));
+
+// Each pack is checked whole before it's offered. A pack chosen again replaces the earlier one.
+async function choosePacks(files) {
+  say("pack-status", files.length ? "Checking…" : "");
+  await busy(async () => {
+    const lines = [];
+    let allGood = true;
+    for (const file of files) {
+      try {
+        const pack = await readPack(file, state.kobo);
+        state.packs = [...state.packs.filter((each) => each.id !== pack.id), pack];
+        const parts = [...pack.mods.map((mod) => `the ${mod.id} mod`), ...(pack.list ? [`${listIds(pack.list.text).length} patches`] : [])];
+        lines.push(`${pack.name} ${pack.version}${pack.author ? ` by ${pack.author}` : ""}: ${parts.join(" and ")}.`);
+      } catch (error) {
+        allGood = false;
+        lines.push(explain(error));
+      }
+    }
+    say("pack-status", lines.join(" "), allGood ? "good" : "bad");
+    showPacks();
+  });
+  render();
+}
+$("pack-files").addEventListener("change", (event) => choosePacks([...event.target.files]));
+
+// A row for each pack on the Kobo or chosen here.
+function showPacks() {
+  const rows = [];
+  const installed = installedPacks();
+  const ids = [...new Set([...Object.keys(installed), ...state.packs.map((pack) => pack.id)])];
+  for (const id of ids) {
+    const chosen = state.packs.find((pack) => pack.id === id);
+    const on = installed[id];
+    const pack = chosen ?? on;
+    const what = chosen
+      ? [...chosen.mods.map((mod) => `the ${mod.id} mod`), ...(chosen.list ? ["patches for Kobo Patcher"] : [])]
+      : [...(on.mods ?? []).map((mod) => `the ${mod} mod`), ...(on.list ? ["patches for Kobo Patcher"] : [])];
+    const where = chosen && on ? `replaces ${on.version}, on the Kobo now` : chosen ? "to add" : "on the Kobo";
+    const box = element("input", { type: "checkbox", id: `pack-${id}`, checked: true });
+    box.addEventListener("change", render);
+    const text = element("span", {}, element("strong", { textContent: `${pack.name} ${pack.version}` }),
+      element("small", { textContent: `${what.join(" and ")}. ${where[0].toUpperCase()}${where.slice(1)}. Untick it to ${chosen && !on ? "leave it out" : "take it off"}.` }));
+    rows.push(element("label", { className: "patch" }, box, text));
+  }
+  $("pack-rows").replaceChildren(...rows);
+}
 
 // The download link follows the language chosen, starting at the browser's own where there's one.
 function showDictionaryLanguages() {

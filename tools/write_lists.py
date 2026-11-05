@@ -31,10 +31,14 @@ def field(text):
     return text
 
 
-def list_for(firmware, patches, all_switch):
+def list_for(firmware, patches, all_switch, edits_by_id=None, cached=None):
+    """The list for one firmware. edits_by_id and cached are compile_patches.py's, from web/patches
+    unless given."""
     name = f"{firmware['model']}-{firmware['firmware']}"
-    edits_by_id = json.loads((ROOT / "web/patches" / f"{name}.json").read_text())
-    cached = set(json.loads((ROOT / "web/patches" / f"{name}.cached.json").read_text()))
+    if edits_by_id is None:
+        edits_by_id = json.loads((ROOT / "web/patches" / f"{name}.json").read_text())
+        cached = json.loads((ROOT / "web/patches" / f"{name}.cached.json").read_text())
+    cached = set(cached or [])
     lines = ["kobo-patcher-list\t2", "\t".join(["firmware", firmware["model"], firmware["firmware"], field(firmware["name"])])]
     for patch in patches:
         edits = edits_by_id.get(patch["id"])

@@ -20,6 +20,7 @@ add:
 test:
 	node --test tests/patcher.test.mjs
 	python3 tests/test_add_patch.py
+	python3 tests/test_pack.py
 
 # Serve the page at http://localhost:8765. With LAN=1, to your Wi-Fi too, for a Kobo to update from.
 serve:

@@ -149,6 +149,19 @@
       </label>
       <p class="status" id="dictionary-status" role="status"></p>
     </div>
+    <div class="dictionaries" id="packs">
+      <h3>Your own mods and patches <span>optional</span></h3>
+      <p>A pack is a zip of mods and patches someone made with <code>tools/pack.py</code>. Only add one
+        from someone you trust: a mod can do anything on your Kobo, and this site doesn't check what it does.
+        Its patches show in Kobo Patcher under the pack's name.</p>
+      <div id="pack-rows"></div>
+      <label class="drop small" id="pack-drop">
+        <input type="file" id="pack-files" accept=".zip" multiple disabled aria-label="Pack files">
+        Drop packs here, or click to choose them
+        <small>Zip files with a kobo-pack.txt in them. Only what's for this Kobo is used.</small>
+      </label>
+      <p class="status" id="pack-status" role="status"></p>
+    </div>
   </section>
 
   <section id="step-firmware" class="locked">

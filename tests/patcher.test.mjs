@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
   PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, planPatch, planUndo, readFirmware, readKOReader, writeZip,
-  listIds, readDictionary, readNickel, setConf, sha256, writeToKobo,
+  listIds, readDictionary, readNickel, readPack, setConf, sha256, writeToKobo,
 } from "../web/patcher.js";
 import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
 
@@ -534,4 +534,86 @@ test("a dictionary is checked, named for its language, and copied to custom-dict
   assert.deepEqual(await readFake(kobo, ".kobo/custom-dict/dicthtml-ru.zip"), new Uint8Array(await good.arrayBuffer()));
   assert.equal(await readFake(kobo, ".kobo/KoboRoot.tgz"), null);
   assert.deepEqual(planUndo(null, (await inspectKobo(kobo)).installed).dictionaries, []);
+});
+
+// A pack as tools/pack.py makes it, with what's given changed for tests that it's refused.
+async function makePack({ id = "mine", mods = [["thing", new Uint8Array(40).fill(3)]], list = true, targets = "N306-4.38.23852", spoil = null } = {}) {
+  const enc = new TextEncoder();
+  const files = [];
+  const lines = ["kobo-pack\t1", `pack\t${id}\t2\tMy stuff\tSomeone`];
+  for (const [modId, data] of mods) {
+    files.push({ name: `mods/lib${modId}.so`, data });
+    lines.push(`mod\t${modId}\t${await sha256(data)}\t${data.length}\t${targets}`);
+  }
+  if (list) {
+    const data = enc.encode(`kobo-patcher-list\t2\nfirmware\tN306\t4.38.23852\tKobo Nia\npatch\t${id}.small\tMY STUFF\t-\t-\tSmall\t\n`
+      + "edit\t/usr/local/Kobo/libnickel.so.1.0.0\t1\t02\t01\n");
+    files.push({ name: "lists/N306-4.38.23852.txt", data });
+    lines.push(`list\tN306-4.38.23852\t${await sha256(data)}\t${data.length}`);
+  }
+  if (spoil) spoil(files, lines);
+  files.unshift({ name: "kobo-pack.txt", data: enc.encode(lines.join("\n") + "\n") });
+  return new File([buildZip(files)], `${id}.zip`);
+}
+
+const NIA = { model: "N306", firmware: "4.38.23852" };
+
+test("a pack is read whole, for this Kobo only", async () => {
+  const pack = await readPack(await makePack(), NIA);
+  assert.deepEqual([pack.id, pack.name, pack.version, pack.author], ["mine", "My stuff", "2", "Someone"]);
+  assert.deepEqual(pack.mods.map((mod) => mod.id), ["thing"]);
+  assert.equal(pack.list.name, "mine-N306-4.38.23852.txt");
+  // A mod for another Kobo is left out, and with nothing left the pack is refused.
+  const other = await readPack(await makePack({ targets: "N428-4.46.23852" }), NIA);
+  assert.deepEqual(other.mods, []);
+  await assert.rejects(readPack(await makePack({ targets: "N428-4.46.23852", list: false }), NIA), /nothing for this Kobo/);
+});
+
+test("a pack that isn't what it says, or takes the page's names, is refused", async () => {
+  const changed = (files) => { files.find((file) => file.name.endsWith(".so")).data = new Uint8Array(40).fill(4); };
+  await assert.rejects(readPack(await makePack({ spoil: changed }), NIA), /isn't what it says/);
+  const missing = (files) => files.splice(files.findIndex((file) => file.name.endsWith(".so")), 1);
+  await assert.rejects(readPack(await makePack({ spoil: missing }), NIA), /is missing mods\/libthing.so/);
+  await assert.rejects(readPack(await makePack({ mods: [["patches", new Uint8Array(4)]] }), NIA), /can't install: patches/);
+  await assert.rejects(readPack(await makePack({ id: "Bad Id" }), NIA), /pack id/);
+  const stranger = (files, lines) => lines.push("run\tsomething");
+  await assert.rejects(readPack(await makePack({ spoil: stranger }), NIA), /doesn't know: run/);
+  const foreign = (files, lines) => {
+    const text = "kobo-patcher-list\t2\nfirmware\tN306\t4.38.23852\tKobo Nia\npatch\tmargins\tX\t-\t-\tM\t\nedit\t/usr/local/Kobo/nickel\t1\t02\t01\n";
+    files.find((file) => file.name.startsWith("lists/")).data = new TextEncoder().encode(text);
+    lines.pop();
+    lines.push(`list\tN306-4.38.23852\tx\t${text.length}`);
+  };
+  await assert.rejects(readPack(await makePack({ spoil: foreign }), NIA), /isn't what it says/);
+  await assert.rejects(readPack(new File([buildZip([{ name: "a", data: new Uint8Array(1) }])], "a.zip"), NIA), /no kobo-pack.txt/);
+});
+
+test("a pack's mods go in as the page's do, its patches beside Kobo Patcher's list, and it comes off whole", async () => {
+  const kobo = await fakeKobo({ ".adds/patches/choices.txt": "mine.small on\n" });
+  const pack = await readPack(await makePack(), NIA);
+  const plan = planPatch(null, [], { packs: [pack] });
+  assert.deepEqual(plan.files.map((file) => file.path), ["./usr/local/Kobo/imageformats/libthing.so"]);
+  await writeToKobo(kobo, plan);
+  assert.equal(new TextDecoder().decode(await readFake(kobo, ".adds/patches/lists/custom/mine-N306-4.38.23852.txt")), pack.list.text);
+  assert.ok(await readFake(kobo, ".kobo/KoboRoot.tgz"));
+  await (await kobo.getDirectoryHandle(".kobo")).removeEntry("KoboRoot.tgz");
+  const { installed } = await inspectKobo(kobo);
+  assert.deepEqual(installed.packs, { mine: { name: "My stuff", version: "2", mods: ["thing"], list: "mine-N306-4.38.23852.txt" } });
+  assert.equal(installed.mods.thing, pack.mods[0].sha256);
+
+  // Taken off: its mod's uninstall file, its list gone, and nothing left in the record.
+  await writeToKobo(kobo, planPatch(null, [], { removePacks: ["mine"], installedPacks: installed.packs }));
+  assert.ok(await readFake(kobo, ".adds/thing/uninstall"));
+  assert.equal(await readFake(kobo, ".adds/patches/lists/custom/mine-N306-4.38.23852.txt"), null);
+  assert.equal(await readFake(kobo, ".adds/kobo-patcher.json"), null);
+});
+
+test("Undo takes packs off too", async () => {
+  const kobo = await fakeKobo({});
+  await writeToKobo(kobo, planPatch(null, [], { packs: [await readPack(await makePack(), NIA)] }));
+  await (await kobo.getDirectoryHandle(".kobo")).removeEntry("KoboRoot.tgz");
+  await writeToKobo(kobo, planUndo(null, (await inspectKobo(kobo)).installed));
+  assert.ok(await readFake(kobo, ".adds/thing/uninstall"));
+  assert.equal(await readFake(kobo, ".adds/patches/lists/custom/mine-N306-4.38.23852.txt"), null);
+  assert.equal(await readFake(kobo, ".adds/kobo-patcher.json"), null);
 });
