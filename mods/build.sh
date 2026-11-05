@@ -9,8 +9,9 @@
 # characters, so Qt loads it beside the other mods; without one it gets the kit's.
 #
 # The kit and a mod's .cpp files are built against Qt 5.2.1's headers (kit/qt-headers.sh fetches
-# them), with no C++ library of their own: they use Nickel's Qt, and operator new and delete from
-# Nickel's. RTTI is on, since Nickel may type-check any widget it delivers a gesture to.
+# them, and kit/vendor.sh fetches Lua and Monocypher), with no C++ library of their own: they use
+# Nickel's Qt, and operator new and delete from Nickel's. RTTI is on, since Nickel may type-check
+# any widget it delivers a gesture to.
 #
 # Every symbol the .so leaves undefined is listed with nm and built into it, with the names the kit
 # looks up, so the kit can check them all before the mod starts. That takes two links.
@@ -36,12 +37,13 @@ else
   cp "$kit/metadata.inc" "$out/"
 fi
 qt="$("$kit/qt-headers.sh")"
+vendor="$("$kit/vendor.sh")"
 
 flags="-target arm-linux-gnueabihf.2.17 -mcpu=cortex_a7 -Os -fvisibility=hidden -ffunction-sections -fdata-sections
   -fno-sanitize=all -fno-unwind-tables -fno-asynchronous-unwind-tables -g0 -fPIC"
 cxx() {
   zig c++ -c $flags -std=c++11 -fno-exceptions -frtti -fvisibility-inlines-hidden -Wno-gnu-inline-cpp-without-extern \
-    -DNK_NAME="\"$name\"" -I"$out" -I"$kit" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" -I"$qt/QtSql" \
+    -DNK_NAME="\"$name\"" -I"$out" -I"$kit" -I"$vendor" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" -I"$qt/QtSql" \
     -o "$2" "$1"
 }
 objects=
@@ -49,7 +51,7 @@ libs=
 for source in "$folder"/*.c "$folder"/vendor/*.c; do
   [ -f "$source" ] || continue
   object="$out/$(basename "$source" .c).o"
-  zig cc -c $flags -w -DNK_NAME="\"$name\"" -I"$root/build" -I"$kit" -o "$object" "$source"
+  zig cc -c $flags -w -DNK_NAME="\"$name\"" -I"$root/build" -I"$kit" -I"$vendor" -o "$object" "$source"
   objects="$objects $object"
 done
 for source in "$folder"/*.cpp; do
@@ -72,7 +74,7 @@ if [ -f "$folder/main.lua" ]; then
     i=$((i + 1))
   done
   printf 'static const Embedded embedded[] = {\n%b};\n' "$table" >> "$embedded"
-  for source in "$kit"/vendor/lua/*.c "$kit"/vendor/monocypher/*.c; do
+  for source in "$vendor"/vendor/lua/*.c "$vendor"/vendor/monocypher/*.c; do
     object="$out/vendor_$(basename "$source" .c).o"
     zig cc -c $flags -w -o "$object" "$source"
     objects="$objects $object"

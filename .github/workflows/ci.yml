@@ -41,6 +41,11 @@ jobs:
         with:
           path: mods/build/qt
           key: qt-${{ hashFiles('mods/kit/qt-headers.sh') }}
+      # Lua and Monocypher, which the kit is built with, from their releases.
+      - uses: actions/cache@v4
+        with:
+          path: mods/build/kit-vendor
+          key: kit-vendor-${{ hashFiles('mods/kit/vendor.sh') }}
       - name: Build the mods
         run: |
           make mods
@@ -69,6 +74,11 @@ jobs:
         with:
           path: mods/build/qt
           key: qt-${{ hashFiles('mods/kit/qt-headers.sh') }}
+      # Lua and Monocypher, which the kit is built with, from their releases.
+      - uses: actions/cache@v4
+        with:
+          path: mods/build/kit-vendor
+          key: kit-vendor-${{ hashFiles('mods/kit/vendor.sh') }}
       # Kobo Patcher only takes updates signed with this key. It's an Ed25519 key in PEM.
       - name: Build and sign the mods
         env:

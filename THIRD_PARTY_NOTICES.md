@@ -26,7 +26,7 @@ The page installs [KOReader](https://github.com/koreader/koreader) (AGPL-3.0) fr
 
 ## The mod kit
 
-The mods are built with [Lua](https://www.lua.org) 5.4 (`mods/kit/vendor/lua`) and [Monocypher](https://monocypher.org) (`mods/kit/vendor/monocypher`), under these licences:
+The mods are built with [Lua](https://www.lua.org) 5.4.9 and [Monocypher](https://monocypher.org) 4.0.3, unchanged, which `mods/kit/vendor.sh` downloads from their releases for the build, under these licences:
 
 ```
 Copyright (C) 1994-2026 Lua.org, PUC-Rio.
@@ -38,4 +38,4 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-Monocypher's licence is in `mods/kit/vendor/monocypher/MONOCYPHER-LICENCE.md`.
+Monocypher's licence is in `mods/kit/licences/MONOCYPHER-LICENCE.md`.
