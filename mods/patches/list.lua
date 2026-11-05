@@ -2,13 +2,18 @@
 -- comes from the page or a download, so nothing in it is trusted: every line is checked, and
 -- nk.patch checks the edits again before it writes any.
 --
---   kobo-patcher-list	1
+--   kobo-patcher-list	2
 --   firmware	<model>	<version>	<name>
 --   patch	<id>	<category>	<group or ->	<flags>	<title>	<warning>
 --   edit	<file>	<offset>	<Kobo's bytes>	<the patch's bytes>
+--   setting	<Section/name>	<value>	<value when it's turned off, or ->
+--
+-- Format 1 is the same without setting lines, and is still read.
 local list = {}
 
-local FORMAT = "1"
+local FORMATS = {["1"] = true, ["2"] = true}
+local MAX_SETTINGS = 16
+local MAX_VALUE = 512
 local MAX_BYTES = 1 << 20
 local MAX_PATCHES = 256
 local MAX_EDITS = 4096
@@ -34,8 +39,14 @@ local function has_flag(flags, flag)
   return false
 end
 
+-- A setting's value: printable, and short.
+local function is_value(text)
+  return #text > 0 and #text <= MAX_VALUE and not text:find("[%c]")
+end
+
 -- Reads a list's text. Returns {model, version, name, patches}, or nil and why. Each patch is {id,
--- title, category, group, warning, restart, cached, all, edits}, and its edits are what nk.patch takes.
+-- title, category, group, warning, restart, cached, all, edits, settings}, and its edits are what
+-- nk.patch takes. Each setting is {key, value, when_off}, when_off being nil to leave it as it is.
 function list.parse(text)
   if #text > MAX_BYTES then return nil, "the patch list is too big" end
   if text == "" then return nil, "it's empty" end
@@ -47,7 +58,7 @@ function list.parse(text)
     local fields = split(line)
     local kind = fields[1]
     if number == 1 then
-      if #fields ~= 2 or kind ~= "kobo-patcher-list" or fields[2] ~= FORMAT then
+      if #fields ~= 2 or kind ~= "kobo-patcher-list" or not FORMATS[fields[2]] then
         return nil, "it isn't a patch list this mod can read"
       end
     elseif number == 2 then
@@ -66,6 +77,7 @@ function list.parse(text)
         cached = has_flag(fields[5], "cached"), -- changes code Nickel runs once
         all = has_flag(fields[5], "all"), -- switched too by "All <category>"
         edits = {},
+        settings = {},
       }
       firmware.patches[#firmware.patches + 1] = patch
     elseif kind == "edit" then
@@ -76,6 +88,12 @@ function list.parse(text)
       end
       patch.edits[#patch.edits + 1] = {file = fields[2], at = math.tointeger(at), find = fields[4], replace = fields[5]}
       edits = edits + 1
+    elseif kind == "setting" then
+      if #fields ~= 4 or not patch or #patch.settings == MAX_SETTINGS or not fields[2]:match("^[%w_]+/[%w_]+$") or
+          not is_value(fields[3]) or not is_value(fields[4]) then
+        return nil, ("line %d is a setting that can't be read"):format(number)
+      end
+      patch.settings[#patch.settings + 1] = {key = fields[2], value = fields[3], when_off = fields[4] ~= "-" and fields[4] or nil}
     elseif kind ~= "" then
       return nil, ("line %d isn't something this mod knows"):format(number)
     end

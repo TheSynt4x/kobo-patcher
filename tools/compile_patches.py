@@ -372,6 +372,10 @@ def main():
             raise SystemExit(f"{patch['id']}: category has to be one of {', '.join(spec['categories'])}")
         if patch.get("restart", False) not in (True, False):
             raise SystemExit(f"{patch['id']}: restart has to be yes or no")
+        for setting in patch.get("settings", []):
+            if not re.fullmatch(r"[A-Za-z0-9_]+/[A-Za-z0-9_]+", setting.get("key", "")) or not isinstance(setting.get("value"), str) \
+                    or not isinstance(setting.get("when_off", ""), str):
+                raise SystemExit(f"{patch['id']}: a setting needs a key, Section/name, and a value, and when_off if any, in quotes")
     for category in spec.get("all_switch", []):
         if category not in spec["categories"]:
             raise SystemExit(f"all_switch: {category} isn't one of the categories")
@@ -397,6 +401,8 @@ def main():
         for patch in spec["patches"]:
             name = patch["file"]
             try:
+                if patch.get("only_on") and not build.get(patch["only_on"]):
+                    raise Misfit(f"not tried on this firmware yet: it needs {patch['only_on']}: true")
                 edits = compile_patch(binaries[name], steps_for(patch, version, sources))
                 if not edits:
                     raise Misfit("it doesn't change anything")
@@ -419,6 +425,7 @@ def main():
     for patch in spec["patches"]:
         item = {"id": patch["id"], "kind": "patch", "category": patch["category"], "title": patch["title"], "description": patch["description"]}
         item.update({key: patch[key] for key in ("warning", "group") if key in patch})
+        item["settings"] = [[*setting["key"].split("/", 1), setting["value"]] for setting in patch.get("settings", [])]
         offered.append({**item, "needsFirmware": True, "targets": targets[patch["id"]]})
     (out / "compiled.js").write_text(
         "// Written by tools/compile_patches.py from patches.yaml. Run `make patches` to change it.\n"

@@ -119,6 +119,7 @@ Each returns false if this firmware's keyboard isn't as expected. Calling one ag
 ## Kobo
 
 - `nk.device.model()` and `nk.device.firmware()`: this Kobo's model, from its serial, such as `"N306"`, and its firmware, such as `"4.38.23852"`.
+- `nk.device.setting(key)` and `nk.device.set_setting(key, value)`: one of Kobo's own settings, in `.kobo/Kobo/Kobo eReader.conf`, with `key` as `"Section/name"`, such as `"FeatureSettings/GoogleDrive"`. `setting` gives a string, or nil when it isn't set. `set_setting` writes it straight away, removes it when `value` is nil, and says whether it was written. Kobo reads most settings as it starts, so a change usually shows after `nk.reboot()`. They open the file the way Nickel does, and a write leaves its other settings as they are. Only once Nickel is running, though: not from `main.lua`'s top level.
 - `nk.import()`: Kobo's import, as after a USB connection, so new books show up.
 - `nk.reboot()`: restarts the Kobo the way Kobo does.
 - `nk.spawn(command)`: runs a shell command outside Nickel. Nickel may well stop, as when it starts KOReader.

@@ -7,35 +7,14 @@ const NICKEL_BIN_PATH = "./usr/local/Kobo/nickel";
 const RECORD = "kobo-patcher.json";
 // Nickel loads every Qt plugin here, which is how a mod starts.
 const modPath = (id) => `./usr/local/Kobo/imageformats/lib${id}.so`;
-const DRIVE_CHECK = "_ZNK6Device19supportsGoogleDriveEv";
-const DROPBOX_CHECK = "_ZNK6Device15supportsDropboxEv";
-const CHECK_START = [0x98, 0xb5, 0x01, 0x21, 0x00, 0xaf];
-const CHECK_TRUE = [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]; // push {lr}; movs r0,#1; pop {pc}
-const DROPBOX_SETTINGS = [
-  ["FeatureSettings", "Dropbox", "1"],
-  ["OneStoreServices", "kobo_dropbox_link_account_enabled", "True"],
-  ["OneStoreServices", "dropbox_link_account_poll", "https://authorize.kobo.com/{region}/{language}/LinkDropbox"],
-];
-const DRIVE_SETTINGS = [
-  ["FeatureSettings", "GoogleDrive", "1"],
-  ["OneStoreServices", "kobo_googledrive_link_account_enabled", "True"],
-  ["OneStoreServices", "googledrive_link_account_start",
-    "https://authorize.kobo.com/{region}/{language}/linkcloudstorage/provider/google_drive"],
-];
-
 // A firmware is known by the hash of its libnickel, so a renamed zip still works
 // and a different build with the same version number doesn't.
 export const SUPPORTED = Object.fromEntries(
   FIRMWARE.filter((build) => build.nickelSha256).map((build) => [build.nickelSha256, build]),
 );
 
-const PATCH_CODE = {
-  "google-drive": { apply: patchDriveCheck, settings: DRIVE_SETTINGS },
-  dropbox: { apply: patchDropboxCheck, settings: DROPBOX_SETTINGS },
-};
-
-export const PATCHES = REGISTRY.filter((item) => item.kind === "patch")
-  .map((item) => ({ settings: [], ...item, ...PATCH_CODE[item.id] }));
+// Each patch's settings for Kobo eReader.conf, as [section, key, value], come from patches.yaml.
+export const PATCHES = REGISTRY.filter((item) => item.kind === "patch").map((item) => ({ settings: [], ...item }));
 
 export class Refused extends Error {}
 
@@ -57,16 +36,6 @@ function concat(chunks, size) {
     at += chunk.length;
   }
   return out;
-}
-
-function indexOfBytes(haystack, needle) {
-  outer: for (let i = 0; i <= haystack.length - needle.length; i++) {
-    for (let j = 0; j < needle.length; j++) {
-      if (haystack[i + j] !== needle[j]) continue outer;
-    }
-    return i;
-  }
-  return -1;
 }
 
 export async function sha256(bytes) {
@@ -224,62 +193,6 @@ export async function readDictionary(file) {
   const [from, to] = match[1].toLowerCase().split("-");
   const language = to && to !== from ? `${from}-${to}` : from;
   return { name: `dicthtml-${language}.zip`, language, file };
-}
-
-// Where an exported function starts in a 32-bit little-endian ELF file, or null.
-export function functionOffset(elf, name) {
-  const magic = [0x7f, 0x45, 0x4c, 0x46, 0x01, 0x01];
-  if (!magic.every((b, i) => elf[i] === b)) {
-    throw new Refused("libnickel isn't the 32-bit ARM file this patch expects");
-  }
-  const view = new DataView(elf.buffer, elf.byteOffset, elf.byteLength);
-  const u16 = (at) => view.getUint16(at, true);
-  const u32 = (at) => view.getUint32(at, true);
-  const [phoff, shoff] = [u32(28), u32(32)];
-  const [phsize, phnum, shsize, shnum] = [u16(42), u16(44), u16(46), u16(48)];
-  const section = (i) => {
-    const at = shoff + i * shsize;
-    return { kind: u32(at + 4), offset: u32(at + 16), size: u32(at + 20), link: u32(at + 24) };
-  };
-  let dynsym = null;
-  for (let i = 0; i < shnum && !dynsym; i++) {
-    if (section(i).kind === 11) dynsym = section(i);
-  }
-  if (!dynsym) return null;
-  const strings = section(dynsym.link);
-  const table = elf.subarray(strings.offset, strings.offset + strings.size);
-  const found = indexOfBytes(table, encoder.encode(`\0${name}\0`));
-  if (found < 0) return null;
-  for (let symbol = dynsym.offset; symbol < dynsym.offset + dynsym.size; symbol += 16) {
-    if (u32(symbol) !== found + 1) continue;
-    const address = u32(symbol + 4) & ~1; // the low bit only marks Thumb code
-    for (let i = 0; i < phnum; i++) {
-      const at = phoff + i * phsize;
-      const [kind, offset, vaddr, filesz] = [u32(at), u32(at + 4), u32(at + 8), u32(at + 16)];
-      if (kind === 1 && vaddr <= address && address < vaddr + filesz) return address - vaddr + offset;
-    }
-  }
-  return null;
-}
-
-// Make a device-model check return true. Refuses code it doesn't know.
-function patchCheck(nickel, symbol, name) {
-  const offset = functionOffset(nickel, symbol);
-  if (offset === null) throw new Refused(`this firmware has no ${name} device check to patch`);
-  if (!CHECK_START.every((b, i) => nickel[offset + i] === b)) {
-    throw new Refused(`the ${name} check has changed in this firmware, so it needs a new patch`);
-  }
-  const out = nickel.slice();
-  out.set(CHECK_TRUE, offset);
-  return out;
-}
-
-export function patchDriveCheck(nickel) {
-  return patchCheck(nickel, DRIVE_CHECK, "Google Drive");
-}
-
-export function patchDropboxCheck(nickel) {
-  return patchCheck(nickel, DROPBOX_CHECK, "Dropbox");
 }
 
 // Set key=value in an INI-style section, keeping the file's other lines.
@@ -655,17 +568,15 @@ function systemFiles(firmware) {
 // mods: [{ id, data, sha256 }] to add. remove.mods: ids to remove the next time Nickel starts.
 // mod: { list: { name, text }, choices: { id: on } } for Kobo Patcher to switch those patches on the
 // Kobo, from its list in .adds/patches/lists, instead of them going into the system files.
-export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null, dictionaries = [] } = {}) {
+// on: every patch that's ticked, however it's put on, for its settings. Turning one off leaves them,
+// because on a model that has the feature already, its "off" values would take it away.
+export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null, dictionaries = [], on = patchIds } = {}) {
   const chosen = PATCHES.filter((patch) => patchIds.includes(patch.id));
   if (chosen.length && !firmware) throw new Refused("patches need the firmware file");
   const files = [];
   if (firmware) {
     const current = { [NICKEL_PATH]: firmware.libnickel, [NICKEL_BIN_PATH]: firmware.nickel };
     for (const patch of chosen) {
-      if (patch.apply) {
-        current[NICKEL_PATH] = patch.apply(current[NICKEL_PATH]);
-        continue;
-      }
       if (!edits[patch.id]) throw new Refused(`"${patch.title}" isn't available for this firmware`);
       for (const path of new Set(edits[patch.id].map((edit) => edit.file))) {
         const part = edits[patch.id].filter((edit) => edit.file === path);
@@ -682,7 +593,7 @@ export function planPatch(firmware, patchIds, { koreader = null, edits = {}, rem
     storage.push({ dir: ["patches"], name: "choices.txt", data: encoder.encode(choices) });
   }
   return {
-    settings: chosen.flatMap((patch) => patch.settings),
+    settings: PATCHES.filter((patch) => on.includes(patch.id)).flatMap((patch) => patch.settings),
     files,
     storage,
     koreader,

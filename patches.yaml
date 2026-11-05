@@ -3,12 +3,17 @@
 #
 # A firmware needs its model code (the first 4 characters of the serial in .kobo/version), the
 # model's name, its version and its download link. The hashes are worked out for you. Set
-# google_drive or dropbox to offer that patch there, once you've tested it, because they aren't compiled.
+# google_drive or dropbox to offer that patch there, once you've tested it: patches with only_on are
+# only compiled for firmware that has the flag they name.
 # Set mod: true once the Patches mod has been tried on that firmware on a real Kobo.
 #
 # A patch has an id, title, description and one of the categories below, which set the order the
 # page shows them in. It can have a warning, and a group where only one in the group can be chosen.
 # Set restart: yes if Kobo Patcher on the Kobo can only make it take effect after a restart.
+# A patch can have settings too, for .kobo/Kobo/Kobo eReader.conf: each a key, "Section/name", the
+# value it gets when the patch goes on, and when_off, the one it gets when Kobo Patcher turns it off, if
+# any. The page writes the values for every ticked patch. Patches with settings only go in the
+# patch list's format 2, which older Kobo Patchers can't read.
 # It sits in `file`, and its edits are one of these:
 #   community     the title of a patch in kobopatch-patches
 #   steps         edits that fit every firmware
@@ -283,6 +288,38 @@ patches:
 
   # These two change the same home screen styles, so only one can be chosen. The footer-only
   # community patch doesn't fit: its result comes out 3 bytes too big for the firmware's space.
+  # Device::supportsGoogleDrive and supportsDropbox decide by model whether Kobo offers them. These
+  # make them return true, with the settings Kobo has on the models that have them.
+  - id: google-drive
+    title: Google Drive in the More menu
+    category: Cloud storage
+    description: Turns off the device-model check that hides Google Drive, and adds the Google Drive settings.
+    restart: yes  # Kobo builds More and reads these settings as it starts
+    only_on: google_drive
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "Device::supportsGoogleDrive() const"
+      - ReplaceBytes: {Offset: 0, FindH: "98B5 0121 00AF", ReplaceH: "00B5 0120 00BD"}  # -> push {lr}; movs r0, #1; pop {pc}
+    settings:
+      - {key: FeatureSettings/GoogleDrive, value: "1", when_off: "0"}
+      - {key: OneStoreServices/kobo_googledrive_link_account_enabled, value: "True"}
+      - {key: OneStoreServices/googledrive_link_account_start, value: "https://authorize.kobo.com/{region}/{language}/linkcloudstorage/provider/google_drive"}
+
+  - id: dropbox
+    title: Dropbox in the More menu
+    category: Cloud storage
+    description: Turns off the device-model check that hides Dropbox, and adds the Dropbox settings.
+    restart: yes  # Kobo builds More and reads these settings as it starts
+    only_on: dropbox
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "Device::supportsDropbox() const"
+      - ReplaceBytes: {Offset: 0, FindH: "98B5 0121 00AF", ReplaceH: "00B5 0120 00BD"}  # -> push {lr}; movs r0, #1; pop {pc}
+    settings:
+      - {key: FeatureSettings/Dropbox, value: "1", when_off: "0"}
+      - {key: OneStoreServices/kobo_dropbox_link_account_enabled, value: "True"}
+      - {key: OneStoreServices/dropbox_link_account_poll, value: "https://authorize.kobo.com/{region}/{language}/LinkDropbox"}
+
   - id: home-covers
     title: Larger home screen covers
     category: Covers

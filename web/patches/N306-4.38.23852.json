@@ -407,6 +407,22 @@
    "replace": "00bf"
   }
  ],
+ "google-drive": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9887336,
+   "find": "98b5012100af",
+   "replace": "00b5012000bd"
+  }
+ ],
+ "dropbox": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9887304,
+   "find": "98b5012100af",
+   "replace": "00b5012000bd"
+  }
+ ],
  "home-covers": [
   {
    "file": "./usr/local/Kobo/nickel",

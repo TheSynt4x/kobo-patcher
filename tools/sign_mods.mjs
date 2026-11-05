@@ -9,6 +9,7 @@
 //   kobo-patcher-manifest	1
 //   mod	<sha512>	<size>	<model-firmware,...>	<version>     the Kobos the mod updates itself on
 //   list	<model-firmware>	<sha512>	<size>
+//   list2	<model-firmware>	<sha512>	<size>                    the same list in format 2, in lists/2
 //
 // The version is update.VERSION in mods/patches/update.lua. A Kobo is only offered the mod when it's
 // higher than its own. The C mod before the Lua one reads only the first four fields.
@@ -61,7 +62,10 @@ const targets = FIRMWARE.filter((build) => build.mod).map((build) => `${build.mo
 const lines = ["kobo-patcher-manifest\t1", ["mod", ...describe(join(MODS, "libpatches.so")), targets.join(","), version].join("\t")];
 for (const file of readdirSync(join(MODS, "lists")).filter((name) => name.endsWith(".txt")).sort())
   lines.push(["list", file.slice(0, -4), ...describe(join(MODS, "lists", file))].join("\t"));
+// Older Kobo Patchers skip list2 lines, and keep reading format 1.
+for (const file of readdirSync(join(MODS, "lists", "2")).filter((name) => name.endsWith(".txt")).sort())
+  lines.push(["list2", file.slice(0, -4), ...describe(join(MODS, "lists", "2", file))].join("\t"));
 const manifest = Buffer.from(lines.join("\n") + "\n");
 writeFileSync(join(MODS, "manifest.txt"), manifest);
 writeFileSync(join(MODS, "manifest.sig"), sign(null, manifest, key).toString("hex") + "\n");
-console.log(`signed web/mods/manifest.txt: the mod for ${targets.join(", ") || "no Kobo"}, and ${lines.length - 2} patch lists`);
+console.log(`signed web/mods/manifest.txt: the mod for ${targets.join(", ") || "no Kobo"}, and ${lines.length - 2} patch lists, in both formats`);

@@ -34,15 +34,11 @@ export const KOREADER = [
   },
 ];
 
-const DRIVE_FIRMWARE = {};
-const DROPBOX_FIRMWARE = {};
 // A mod is only offered where its build has run on a real Kobo, marked mod: true in patches.yaml.
 // The mod updates itself on the same firmware. KOReader is started from its row in More, so it's
 // offered on the same firmware too.
 const PATCHES_MOD_FIRMWARE = {};
-for (const { model, firmware, google_drive: drive, dropbox, mod } of FIRMWARE) {
-  if (drive) (DRIVE_FIRMWARE[model] ??= []).push(firmware);
-  if (dropbox) (DROPBOX_FIRMWARE[model] ??= []).push(firmware);
+for (const { model, firmware, mod } of FIRMWARE) {
   if (mod) (PATCHES_MOD_FIRMWARE[model] ??= []).push(firmware);
 }
 
@@ -63,24 +59,6 @@ export const REGISTRY = [
     warning: "Tested on one Kobo Nia. Use it at your own risk.",
     file: "mods/libpatches.so",
     targets: PATCHES_MOD_FIRMWARE,
-  },
-  {
-    id: "google-drive",
-    kind: "patch",
-    category: "Cloud storage",
-    title: "Google Drive in the More menu",
-    description: "Turns off the device-model check that hides Google Drive, and adds the Drive settings.",
-    needsFirmware: true,
-    targets: DRIVE_FIRMWARE,
-  },
-  {
-    id: "dropbox",
-    kind: "patch",
-    category: "Cloud storage",
-    title: "Dropbox in the More menu",
-    description: "Turns off the device-model check that hides Dropbox, and adds the Dropbox settings.",
-    needsFirmware: true,
-    targets: DROPBOX_FIRMWARE,
   },
   ...COMPILED_PATCHES,
   {

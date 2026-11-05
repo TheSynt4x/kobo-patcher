@@ -25,6 +25,7 @@
 #include <QNetworkRequest>
 #include <QPair>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -863,6 +864,35 @@ static int l_firmware(lua_State *co) {
     return 1;
 }
 
+/* nk.device.setting(key): one of Kobo's own settings, from .kobo/Kobo/Kobo eReader.conf, as a
+ * string, or nil when it isn't set. key is "Section/name". Opened as Nickel opens it, through a
+ * default QSettings, so it's the same file, and QSettings merges a write into it. Only once
+ * Nickel is running: never from main.lua's top level. */
+static int l_setting(lua_State *co) {
+    QSettings settings;
+    QVariant value = settings.value(QString::fromUtf8(luaL_checkstring(co, 1)));
+    if (!value.isValid()) {
+        lua_pushnil(co);
+        return 1;
+    }
+    QByteArray text = value.toString().toUtf8();
+    lua_pushlstring(co, text.constData(), text.size());
+    return 1;
+}
+
+/* nk.device.set_setting(key, value): sets one of Kobo's settings, or removes it when value is nil,
+ * and writes the file straight away. Returns whether it was written. Kobo reads most of its
+ * settings when it starts, so what they change usually shows after a restart. */
+static int l_set_setting(lua_State *co) {
+    QString key = QString::fromUtf8(luaL_checkstring(co, 1));
+    QSettings settings;
+    if (lua_isnoneornil(co, 2)) settings.remove(key);
+    else settings.setValue(key, QString::fromUtf8(luaL_checkstring(co, 2)));
+    settings.sync();
+    lua_pushboolean(co, settings.status() == QSettings::NoError);
+    return 1;
+}
+
 /* ---- the mod's own file ---- */
 
 /* nk.self_sha512(): the hash of the mod's .so as installed, or nil. */
@@ -915,7 +945,8 @@ void kit_open_tools(lua_State *L) {
                                               {"remove", l_remove}, {"mkdir", l_mkdir}, {0, 0}};
     static const luaL_Reg crypto_functions[] = {{"md5", l_md5}, {"sha1", l_sha1}, {"sha256", l_sha256}, {"sha512", l_sha512},
                                                 {"ed25519_verify", l_ed25519_verify}, {0, 0}};
-    static const luaL_Reg device_functions[] = {{"model", l_model}, {"firmware", l_firmware}, {0, 0}};
+    static const luaL_Reg device_functions[] = {{"model", l_model}, {"firmware", l_firmware}, {"setting", l_setting},
+                                                {"set_setting", l_set_setting}, {0, 0}};
     static const luaL_Reg text_functions[] = {{"lower", l_lower}, {"decompose", l_decompose}, {"language_name", l_language_name}, {0, 0}};
     add_library(L, "http", http_functions);
     add_library(L, "re", re_functions);

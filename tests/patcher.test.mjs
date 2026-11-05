@@ -10,7 +10,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
-  PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
+  PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, planPatch, planUndo, readFirmware, readKOReader, writeZip,
   listIds, readDictionary, readNickel, setConf, sha256, writeToKobo,
 } from "../web/patcher.js";
 import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
@@ -57,6 +57,18 @@ def fake(path, start):
         z.writestr("KoboRoot.tgz", root.getvalue())
 `;
 
+// The Drive patch's edit for a made-up firmware, where its check starts with these bytes, as
+// patches.yaml has it for real ones.
+const DRIVE_START = "98b5012100af";
+function driveEdits(nickel) {
+  const at = Buffer.from(nickel).indexOf(Buffer.from(DRIVE_START, "hex"));
+  return { "google-drive": [{ file: NICKEL, at, find: DRIVE_START, replace: "00b5012000bd" }] };
+}
+
+// The real firmware's compiled edits.
+const realEdits = () => JSON.parse(readFileSync(join(repo, "web/patches/N306-4.38.23852.json"), "utf8"));
+const patchedFile = (plan) => plan.files.find((file) => file.path === NICKEL).data;
+
 function fakeFirmware(name, startHex) {
   const path = join(work, name);
   python(`${FAKE}\nfake(sys.argv[1], bytes.fromhex(sys.argv[2]))`, path, startHex);
@@ -66,7 +78,7 @@ function fakeFirmware(name, startHex) {
 test("reads, patches and packages a made-up firmware as expected", async () => {
   const path = fakeFirmware("good.zip", "98B5012100AF");
   const nickel = await readNickel(await openAsBlob(path));
-  const patched = patchDriveCheck(nickel);
+  const patched = patchedFile(planPatch({ libnickel: nickel }, ["google-drive"], { edits: driveEdits(nickel) }));
   const packaged = await buildPackage([{ path: NICKEL, data: patched, mode: 0o775 }], MTIME);
   writeFileSync(join(work, "tar"), gunzipSync(packaged));
   const expected = ["42891cb5f78fa7b437370798c023ced18d89172feab687a603ce5db692b767ac",
@@ -92,7 +104,8 @@ with tarfile.open(sys.argv[1]) as tar:
 test("refuses a check it doesn't recognise and files that aren't firmware", async () => {
   const changed = fakeFirmware("changed.zip", "10B500000000");
   const nickel = await readNickel(await openAsBlob(changed));
-  assert.throws(() => patchDriveCheck(nickel), Refused);
+  const elsewhere = { "google-drive": [{ file: NICKEL, at: 0, find: DRIVE_START, replace: "00b5012000bd" }] };
+  assert.throws(() => planPatch({ libnickel: nickel }, ["google-drive"], { edits: elsewhere }), Refused);
   writeFileSync(join(work, "junk.zip"), "not a zip");
   await assert.rejects(readNickel(await openAsBlob(join(work, "junk.zip"))), Refused);
   const noRoot = join(work, "noroot.zip");
@@ -120,7 +133,7 @@ test("the registry only offers items on firmware it can support", () => {
   for (const build of FIRMWARE) {
     const edits = JSON.parse(readFileSync(join(repo, "web/patches", `${build.model}-${build.firmware}.json`), "utf8"));
     for (const item of registryFor(build.model, build.firmware)) {
-      if (item.kind === "patch" && !["google-drive", "dropbox"].includes(item.id)) assert.ok(edits[item.id], `${item.id}: no edits for ${build.model}`);
+      if (item.kind === "patch") assert.ok(edits[item.id], `${item.id}: no edits for ${build.model}`);
     }
   }
   assert.deepEqual(registryFor("N428", "4.38.23852"), []);
@@ -166,7 +179,7 @@ test("a package can merge several files, and only holds what was chosen", async 
   assert.equal(planUndo({ libnickel: nickel }, {}).files[0].data, nickel);
   assert.deepEqual(planPatch({ libnickel: nickel }, []).record, { patches: [], mods: {} });
 
-  const both = planPatch({ libnickel: nickel }, ["google-drive"], { mods });
+  const both = planPatch({ libnickel: nickel }, ["google-drive"], { mods, edits: driveEdits(nickel) });
   writeFileSync(join(work, "merged.tgz"), await buildPackage(both.files, MTIME));
   const listed = python(`
 import tarfile
@@ -304,6 +317,14 @@ test("setConf adds the Drive settings where they belong", () => {
   }
 });
 
+test("a patch's settings are written whenever it's ticked, even when Kobo Patcher puts it on", () => {
+  const plan = planPatch(null, [], { on: ["dropbox"] });
+  assert.deepEqual(plan.files, []);
+  assert.deepEqual(plan.settings.map(([section, key]) => `${section}/${key}`),
+    ["FeatureSettings/Dropbox", "OneStoreServices/kobo_dropbox_link_account_enabled", "OneStoreServices/dropbox_link_account_poll"]);
+  assert.deepEqual(planPatch(null, [], { on: [] }).settings, []);
+});
+
 test("setConf keeps the line ending when it replaces a value in a CRLF file", () => {
   assert.equal(setConf("[A]\r\nx=1\r\ny=2\r\n", "A", "x", "9"), "[A]\r\nx=9\r\ny=2\r\n");
 });
@@ -323,21 +344,20 @@ with zipfile.ZipFile(sys.argv[1]) as z:
 test("the real firmware is recognised and its package is the known good one", { skip: !existsSync(REAL_FIRMWARE) }, async () => {
   const nickel = await readNickel(await openAsBlob(REAL_FIRMWARE));
   assert.equal(SUPPORTED[await sha256(nickel)]?.firmware, "4.38.23852");
-  const patched = patchDriveCheck(nickel);
+  const patched = patchedFile(planPatch({ libnickel: nickel }, ["google-drive"], { edits: realEdits() }));
   const packaged = await buildPackage([{ path: NICKEL, data: patched, mode: 0o775 }], MTIME);
   assert.equal(await sha256(gunzipSync(packaged)), "452fcb7f8560242bb6203981e72d168d871846dd1e8b8f42b57451917098827e");
 });
 
 test("the Dropbox patch changes only its check on the real firmware, and works alongside Drive", { skip: !existsSync(REAL_FIRMWARE) }, async () => {
   const nickel = await readNickel(await openAsBlob(REAL_FIRMWARE));
-  const patched = patchDropboxCheck(nickel);
+  const patched = patchedFile(planPatch({ libnickel: nickel }, ["dropbox"], { edits: realEdits() }));
   const changed = nickel.reduce((found, byte, at) => (byte === patched[at] ? found : [...found, at]), []);
   assert.deepEqual(changed, [0x96de48, 0x96de4b, 0x96de4d]);
   assert.deepEqual([...patched.subarray(0x96de48, 0x96de4e)], [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]);
-  const both = planPatch({ libnickel: nickel, nickel: new Uint8Array(1) }, ["google-drive", "dropbox"]);
+  const both = planPatch({ libnickel: nickel, nickel: new Uint8Array(1) }, ["google-drive", "dropbox"], { edits: realEdits() });
   const settings = both.settings.map(([, key]) => key);
   assert.ok(settings.includes("googledrive_link_account_start") && settings.includes("dropbox_link_account_poll"));
-  assert.throws(() => patchDropboxCheck(patched), Refused);
 });
 
 // A drive in memory, with the parts of the File System Access API the page uses.

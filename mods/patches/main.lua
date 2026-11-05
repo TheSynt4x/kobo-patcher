@@ -119,6 +119,16 @@ local function set_quietly(toggle, on)
   quiet = quiet - 1
 end
 
+-- A patch's settings in Kobo eReader.conf: its values going on, and its when_off values going off.
+-- Only from a tap, never as the mod loads, so not from apply_choices: the page writes them over
+-- USB for patches it switches, and they take effect after a restart anyway.
+local function write_settings(patch, on)
+  for _, setting in ipairs(patch.settings or {}) do
+    local value = on and setting.value or setting.when_off
+    if value and not nk.device.set_setting(setting.key, value) then nk.log("couldn't write " .. setting.key) end
+  end
+end
+
 -- Switches one patch, and the others in its group off for one going on. Returns whether it did,
 -- and whether that needs a restart.
 local function switch(patches, rows, i, on)
@@ -129,6 +139,7 @@ local function switch(patches, rows, i, on)
       if (row.state == "on" or row.state == "partly") and same_group(patch, other) then
         local ok, again = nk.patch.set(other.edits, false, other)
         if ok then
+          write_settings(other, false)
           restart = restart or again
           row.state = "off"
           choose(other, false)
@@ -143,6 +154,7 @@ local function switch(patches, rows, i, on)
     return false, restart
   end
   nk.log(patch.id .. ": " .. (on and "on" or "off"))
+  write_settings(patch, on)
   rows[i].state = on and "on" or "off"
   if rows[i].toggle then set_quietly(rows[i].toggle, on) end
   choose(patch, on)

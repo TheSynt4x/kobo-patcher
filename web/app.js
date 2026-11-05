@@ -415,7 +415,8 @@ async function loadMods(items) {
 // Kobo Patcher's patch list for this firmware, also built by `make mods`. Without it there's no mod.
 async function loadList(name) {
   try {
-    const response = await fetch(new URL(`mods/lists/${name}`, import.meta.url), { cache: "no-cache" });
+    // Format 2, which the Kobo Patcher this page installs reads.
+    const response = await fetch(new URL(`mods/lists/2/${name}`, import.meta.url), { cache: "no-cache" });
     if (!response.ok) throw new Error(`${response.status}`);
     const text = await response.text();
     return { name, text, ids: new Set(listIds(text)) };
@@ -517,6 +518,7 @@ function patch() {
     mod,
     koreader: addons.includes("koreader") ? state.addons.koreader : null,
     dictionaries: state.dictionaries,
+    on: chosenPatches(),
   }));
 }
 
