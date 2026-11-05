@@ -142,6 +142,7 @@ function render() {
   $("pack-files").disabled = state.busy || !state.kobo;
   for (const box of document.querySelectorAll("#pack-rows input")) box.disabled = state.busy;
   for (const box of document.querySelectorAll("#patches input")) box.disabled = state.busy;
+  $("patches-hint").hidden = !!state.kobo;
   showAllSwitches();
   if ($("via-kobopatcher")) $("via-kobopatcher").hidden = !viaKoboPatcher();
   // KOReader starts from the row Kobo Patcher adds to More, so adding it brings Kobo Patcher along.

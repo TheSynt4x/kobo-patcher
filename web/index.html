@@ -88,8 +88,8 @@
     color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; vertical-align: 1px;
   }
   .dictionaries { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
-  /* Before a Kobo is chosen there are no patches above, so no line either. */
-  #patches:empty + .dictionaries { margin-top: 0; padding-top: 0; border-top: 0; }
+  .hint { margin: 0; color: var(--muted); font-size: 15px; }
+  .hint[hidden] { display: none; }
   .dictionaries h3 { margin: 0 0 4px; font-size: 15px; }
   .dictionaries h3 span { margin-left: 4px; color: var(--muted); font-size: 14px; font-weight: 400; }
   .dictionaries p { color: var(--muted); font-size: 14px; line-height: 1.4; }
@@ -143,6 +143,7 @@
 
   <section id="step-patches" class="locked">
     <h2><span>2</span>Patches</h2>
+    <p class="hint" id="patches-hint">Select your Kobo above, and the patches for its model and firmware show here.</p>
     <div id="patches"></div>
     <div class="dictionaries" id="dictionaries">
       <h3>Dictionaries <span>optional</span></h3>
