@@ -5,9 +5,11 @@
  * and operator new and delete from Nickel's. Calls into Qt and Nickel are direct. build.sh lists
  * every symbol the mod leaves undefined, and they're all checked before the mod starts, so a
  * firmware missing one gets nothing at all rather than a crash when it's first called. */
+#include <QApplication>
 #include <QBoxLayout>
 #include <QCheckBox>
 #include <QCoreApplication>
+#include <QDesktopWidget>
 #include <QDialog>
 #include <QGridLayout>
 #include <QHash>
@@ -599,13 +601,14 @@ NkLabel *nk_section(NkScreen *s, const char *title) {
 NkLabel *nk_text(NkScreen *s, const char *text) {
     QLabel *line = label(s->paging, screen.vptrs[LABEL_TEXT], text);
     line->setWordWrap(true);
-    /* Half a line above and below, as Kobo leaves around its own notes, in the label's own font
-     * once Kobo's style has set it, so it scales with the screen. Kobo's own margins at the sides
-     * stay, so the text lines up with the rows. */
-    line->ensurePolished();
-    int space = line->fontMetrics().height() / 2;
-    QMargins sides = line->contentsMargins();
-    line->setContentsMargins(sides.left(), space, sides.right(), space);
+    /* Space above and below, as Kobo leaves around its own notes: less above, since a row above has
+     * padding of its own, so the text sits evenly between it and what follows. As padding in the
+     * label's own style, because Kobo's stylesheet sets a label's margins again when it styles it,
+     * and scaled from the Nia's 758 pixels across, as Kobo's fonts are. Kobo's own padding at the
+     * sides stays, so the text lines up with the rows. */
+    QDesktopWidget *desktop = QApplication::desktop();
+    qreal scale = desktop && desktop->width() > 0 ? qMax<qreal>(1, qMin(desktop->width(), desktop->height()) / 758.0) : 1;
+    line->setStyleSheet(QStringLiteral("padding-top: %1px; padding-bottom: %2px;").arg(qRound(8 * scale)).arg(qRound(22 * scale)));
     add(s, line);
     return reinterpret_cast<NkLabel *>(line);
 }
