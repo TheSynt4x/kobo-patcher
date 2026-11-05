@@ -44,7 +44,7 @@ jobs:
       - name: Build the mods
         run: |
           make mods
-          sha256sum web/mods/libpatches.so web/mods/lists/*
+          sha256sum web/mods/libpatches.so web/mods/lists/*.txt web/mods/lists/2/*.txt
 
   deploy:
     needs: test
@@ -76,7 +76,7 @@ jobs:
         run: |
           make mods
           node tools/sign_mods.mjs --require
-          sha256sum web/mods/*.* web/mods/lists/*
+          sha256sum web/mods/*.* web/mods/lists/*.txt web/mods/lists/2/*.txt
       - name: Set up SSH
         env:
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
