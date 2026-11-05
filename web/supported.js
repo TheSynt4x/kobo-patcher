@@ -1,9 +1,9 @@
 // What the patcher accepts. The page refuses anything not listed here, and its
 // "supported versions" window is built from this file. Firmware and compiled patches
 // come from patches.yaml, through `make patches`.
-import { COMPILED_PATCHES, FIRMWARE, PATCH_CATEGORIES } from "./patches/compiled.js";
+import { ALL_SWITCH, COMPILED_PATCHES, FIRMWARE, PATCH_CATEGORIES } from "./patches/compiled.js";
 
-export { FIRMWARE };
+export { ALL_SWITCH, FIRMWARE };
 
 // The page's sections, in order. Patch categories are set in patches.yaml.
 export const CATEGORIES = ["Mods", ...PATCH_CATEGORIES, "Add-ons"];
@@ -34,15 +34,11 @@ export const KOREADER = [
   },
 ];
 
-const DRIVE_FIRMWARE = {};
-const DROPBOX_FIRMWARE = {};
 // A mod is only offered where its build has run on a real Kobo, marked mod: true in patches.yaml.
 // The mod updates itself on the same firmware. KOReader is started from its row in More, so it's
 // offered on the same firmware too.
 const PATCHES_MOD_FIRMWARE = {};
-for (const { model, firmware, google_drive: drive, dropbox, mod } of FIRMWARE) {
-  if (drive) (DRIVE_FIRMWARE[model] ??= []).push(firmware);
-  if (dropbox) (DROPBOX_FIRMWARE[model] ??= []).push(firmware);
+for (const { model, firmware, mod } of FIRMWARE) {
   if (mod) (PATCHES_MOD_FIRMWARE[model] ??= []).push(firmware);
 }
 
@@ -64,24 +60,6 @@ export const REGISTRY = [
     file: "mods/libpatches.so",
     targets: PATCHES_MOD_FIRMWARE,
   },
-  {
-    id: "google-drive",
-    kind: "patch",
-    category: "Cloud storage",
-    title: "Google Drive in the More menu",
-    description: "Turns off the device-model check that hides Google Drive, and adds the Drive settings.",
-    needsFirmware: true,
-    targets: DRIVE_FIRMWARE,
-  },
-  {
-    id: "dropbox",
-    kind: "patch",
-    category: "Cloud storage",
-    title: "Dropbox in the More menu",
-    description: "Turns off the device-model check that hides Dropbox, and adds the Dropbox settings.",
-    needsFirmware: true,
-    targets: DROPBOX_FIRMWARE,
-  },
   ...COMPILED_PATCHES,
   {
     id: "koreader",
@@ -96,3 +74,11 @@ export const REGISTRY = [
 export function registryFor(model, firmware) {
   return REGISTRY.filter((item) => item.targets[model]?.includes(firmware));
 }
+
+// Dictionaries the page links to: reader.dict's, made from Wiktionary, free, and for languages Kobo
+// has none for too. At file(), with the language twice. Only the languages it has a Kobo file for.
+export const DICTIONARIES = {
+  file: (language) => `https://www.reader-dict.com/file/${language}/dicthtml-${language}-${language}.zip`,
+  languages: ["bg", "ca", "cs", "da", "de", "el", "en", "eo", "es", "fi", "fr", "it", "ja", "jbo", "ko", "lt", "nl", "pl",
+    "pt", "ro", "ru", "sv", "th", "tr", "uk", "zh"],
+};

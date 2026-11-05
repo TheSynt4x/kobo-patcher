@@ -3,12 +3,16 @@
 #
 # A firmware needs its model code (the first 4 characters of the serial in .kobo/version), the
 # model's name, its version and its download link. The hashes are worked out for you. Set
-# google_drive or dropbox to offer that patch there, once you've tested it, because they aren't compiled.
+# google_drive or dropbox to offer that patch there, once you've tested it: patches with only_on are
+# only compiled for firmware that has the flag they name.
 # Set mod: true once the Patches mod has been tried on that firmware on a real Kobo.
 #
 # A patch has an id, title, description and one of the categories below, which set the order the
 # page shows them in. It can have a warning, and a group where only one in the group can be chosen.
 # Set restart: yes if Kobo Patcher on the Kobo can only make it take effect after a restart.
+# A patch can have settings too, for .kobo/Kobo/Kobo eReader.conf: each a key, "Section/name", the
+# value it gets when the patch goes on, and when_off, the one it gets when it's turned off, if any.
+# The page and Kobo Patcher both write them as they switch the patch.
 # It sits in `file`, and its edits are one of these:
 #   community     the title of a patch in kobopatch-patches
 #   steps         edits that fit every firmware
@@ -36,8 +40,12 @@ categories:
   - Reading
   - Cloud storage
   - Covers
-  - Hide Kobo's promotions
+  - Ads and upsells
   - Updates and USB
+
+# Categories with one more switch, "All <category>", that turns every patch in them on or off.
+all_switch:
+  - Ads and upsells
 
 patches:
   - id: upgrade-confirmation
@@ -87,33 +95,155 @@ patches:
     file: libnickel.so.1.0.0
     community: My 10 line spacing values
 
+  # The first edit is "Remove recommendations (row1col2) from home screen" from kobopatch-patches.
+  # The rest are for the tile beside the books, which HomePageController::configureWidgets fills
+  # from getPrioritizedWidgetList: these leave out the wishlist, related reads and recommendations.
+  # Top picks stay in the list, because with it empty the tiles aren't set up and both show the
+  # Quick Tour. Instead HomePageView::configureTopPickWidget always takes its branch for having
+  # none, and an empty top picks tile hides itself, as it does offline.
   - id: no-recommendations
-    title: No recommendations on the home screen
-    category: "Hide Kobo's promotions"
-    description: Hides the top-right tile that shows when fewer than 2 books are open, with recommendations or the Quick Tour.
+    title: No recommendation or store tiles on the home screen
+    category: Ads and upsells
+    description: Hides the tiles with recommendations, top picks, your wishlist, and the Quick Tour at the top, which show when fewer than 2 books are open.
     file: libnickel.so.1.0.0
-    community: Remove recommendations (row1col2) from home screen
+    steps:
+      - BaseAddress: "HomePageView::configureTopRight(HomePageWidgets)"
+      - ReplaceBytes: {Offset: 48, FindH: "58B1", ReplaceInstNOP: true}  # never skip hiding the top-right widget
+      - BaseAddress: "HomePageController::getPrioritizedWidgetList()"
+      - ReplaceBytes: {Offset: 0x118, FindH: "0423", CheckOnly: true}  # movs r3, #4: recommendations
+      - ReplaceBytes: {Offset: 0x122, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QList<HomePageWidgets>::append(HomePageWidgets const&)"}}
+      - ReplaceBytes: {Offset: 0x12C, FindH: "0323", CheckOnly: true}  # movs r3, #3: related reads
+      - ReplaceBytes: {Offset: 0x136, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QList<HomePageWidgets>::append(HomePageWidgets const&)"}}
+      - ReplaceBytes: {Offset: 0x140, FindH: "0223", CheckOnly: true}  # movs r3, #2: wishlist
+      - ReplaceBytes: {Offset: 0x14A, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QList<HomePageWidgets>::append(HomePageWidgets const&)"}}
+      - BaseAddress: "HomePageView::configureTopPickWidget(TopPicksHomeWidget*, QVector<Activity>&)"
+      - ReplaceBytes: {Offset: 0x16, FindH: "83B3", ReplaceH: "30E0"}  # cbz r3, +0x7a -> b +0x7a
 
-  # The Kobo Plus part of "Never show Kobo Plus, wishlist, and points SmartLinks". The full
-  # patch no longer fits: the wishlist's number has since changed.
+  # FindReadHomeWidget is the "Need something to read?" tile Home shows when no book is open. Its
+  # configure sets the shop's name as the line under it, or for a new account a first-purchase offer,
+  # and its tapped opens the store. These skip the offer and the shop's name, and rewrite tapped
+  # (24 bytes) to open My Books as its button does, through the main window view's LibraryNavMixin:
+  #   push {r4, lr}; bl TappableHomePageWidget::tapped(); bl MainWindowController::sharedInstance()
+  #   ldr r0, [r0, #0x10] (its view); cbz r0, end; adds r0, #0x18 (the view's LibraryNavMixin)
+  #   bl LibraryNavMixin::showLastLibraryTab(); end: pop {r4, pc}; nop
+  # The tile's own helper at 0x58 is a DiscoverNavMixin, too small to be used as a LibraryNavMixin.
+  - id: home-tile-my-books
+    title: Home's empty tile opens My Books
+    category: Ads and upsells
+    description: When no book is open, Home's "Need something to read?" tile opens your books instead of the store, without the shop's name or first-purchase offers.
+    restart: yes  # the tile's text is only set again when Home is built
+    file: libnickel.so.1.0.0
+    per_firmware:
+      "4.46.23852":
+        - BaseAddress: "FindReadHomeWidget::configure()"
+        - ReplaceBytes: {Offset: 0x56, FindH: "40F00D81", ReplaceH: "AFF30080"}  # bne.w -> nop.w: never the first-purchase offer
+        - ReplaceBytes: {Offset: 0x74, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "GenericHomeWidget::setMetaText(QString)"}}
+        - BaseAddress: "FindReadHomeWidget::tapped()"
+        - ReplaceBytes:
+            Offset: 0
+            FindH: "98B5 0446 00AF FFF4 82E7 04F1 5800 BD46 BDE8 9840 E3F4 D6B4"
+            ReplaceH: "10B5 BL{TappableHomePageWidget::tapped()} BL{MainWindowController::sharedInstance()} 0069 10B1 1830 BL{LibraryNavMixin::showLastLibraryTab()} 10BD 00BF"
+      "4.38.23852":
+        - BaseAddress: "FindReadHomeWidget::configure()"
+        - ReplaceBytes: {Offset: 0x56, FindH: "40F00D81", ReplaceH: "AFF30080"}  # bne.w -> nop.w: never the first-purchase offer
+        - ReplaceBytes: {Offset: 0x74, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "GenericHomeWidget::setMetaText(QString)"}}
+        - BaseAddress: "FindReadHomeWidget::tapped()"
+        - ReplaceBytes:
+            Offset: 0
+            FindH: "98B5 0446 00AF 11F5 2AE3 04F1 5800 BD46 BDE8 9840 F5F4 14B4"
+            ReplaceH: "10B5 BL{TappableHomePageWidget::tapped()} BL{MainWindowController::sharedInstance()} 0069 10B1 1830 BL{LibraryNavMixin::showLastLibraryTab()} 10BD 00BF"
+
+  # The home screen's rotating links. ActivityManager::smartLinkGeneralMessage and
+  # smartLinkPriorityMessage each build a list of SmartLinkType and pick one at random, so these
+  # leave the store's types out of the lists. Half the time the general one returns Kobo Plus
+  # before building its list, and the bpl.w that skips to that is made a nop.w. With nothing
+  # left, SmartLinkWidget::showEmptyMessage hides the widget as it does under parental controls,
+  # instead of asking for your interests. Tips, release notes and reading stats stay.
   - id: no-kobo-plus
-    title: No Kobo Plus suggestion on the home screen
-    category: "Hide Kobo's promotions"
-    description: Stops the home screen's rotating suggestion links from offering Kobo Plus.
+    title: No store links on the home screen
+    category: Ads and upsells
+    description: Stops the home screen's rotating links from offering Kobo Plus, the store, your wishlist, Super Points and audiobooks. Tips and reading stats stay.
     file: libnickel.so.1.0.0
     steps:
       - BaseAddress: "ActivityManager::smartLinkGeneralMessage(Device const&)"
-      - ReplaceBytes: {Offset: 310, FindH: "02 23", CheckOnly: true}  # movs r3, #2
-      - ReplaceBytes:
-          Offset: 320
-          ReplaceInstNOP: true
-          FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}
+      - ReplaceBytes: {Offset: 0x32, FindH: "40F11482", ReplaceH: "AFF30080"}  # bpl.w -> nop.w: Kobo Plus first
+      - ReplaceBytes: {Offset: 0x3A, FindH: "0423", CheckOnly: true}  # movs r3, #4: categories
+      - ReplaceBytes: {Offset: 0x44, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - ReplaceBytes: {Offset: 0xDA, FindH: "0E23", CheckOnly: true}  # movs r3, #14: related reads
+      - ReplaceBytes: {Offset: 0xE4, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - ReplaceBytes: {Offset: 0x11C, FindH: "0F23", CheckOnly: true}  # movs r3, #15: wishlist
+      - ReplaceBytes: {Offset: 0x126, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - ReplaceBytes: {Offset: 0x136, FindH: "0223", CheckOnly: true}  # movs r3, #2: Kobo Plus
+      - ReplaceBytes: {Offset: 0x140, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - ReplaceBytes: {Offset: 0x5EA, FindH: "1223", CheckOnly: true}  # movs r3, #18: Super Points
+      - ReplaceBytes: {Offset: 0x5F6, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - ReplaceBytes: {Offset: 0x62E, FindH: "1423", CheckOnly: true}  # movs r3, #20: audiobooks
+      - ReplaceBytes: {Offset: 0x63A, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - BaseAddress: "ActivityManager::smartLinkPriorityMessage(Device const&)"
+      - ReplaceBytes: {Offset: 0x1F6, FindH: "0723", CheckOnly: true}  # movs r3, #7: Kobo Plus
+      - ReplaceBytes: {Offset: 0x204, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - BaseAddress: "SmartLinkWidget::showEmptyMessage()"
+      - ReplaceBytes: {Offset: 0x4C, FindInstBLX: {SymPLT: "Device::isParentalControlEnabled() const"}, CheckOnly: true}
+      - ReplaceBytes: {Offset: 0x52, FindH: "50D0", ReplaceH: "00BF"}  # beq -> nop: hide, as under parental controls
+
+  # The OverDrive types of the same lists: borrowing from a library, signing up, and holds.
+  - id: no-overdrive-links
+    title: No library links on the home screen
+    category: Ads and upsells
+    description: Stops the home screen's rotating links from suggesting OverDrive, for borrowing from a public library, and from saying a hold is ready. Keep this off if you borrow books that way.
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "ActivityManager::smartLinkGeneralMessage(Device const&)"
+      - ReplaceBytes: {Offset: 0x5A6, FindH: "0323", CheckOnly: true}  # movs r3, #3: borrow from your library
+      - ReplaceBytes: {Offset: 0x5B0, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - BaseAddress: "ActivityManager::smartLinkPriorityMessage(Device const&)"
+      - ReplaceBytes: {Offset: 0x1DC, FindH: "0623", CheckOnly: true}  # movs r3, #6: OverDrive sign-up
+      - ReplaceBytes: {Offset: 0x1E6, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+      - ReplaceBytes: {Offset: 0x15C, FindH: "0823", CheckOnly: true}  # movs r3, #8: holds
+      - ReplaceBytes: {Offset: 0x16A, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+
+  # And the Instapaper type: "Read articles from the web on your eReader". InstapaperAboutJit::maybeShow
+  # is the pop-up Home shows once about Instapaper, and returns 0 straight away here, for not shown.
+  - id: no-instapaper-links
+    title: No Instapaper suggestions on the home screen
+    category: Ads and upsells
+    description: Stops the home screen suggesting Instapaper, in its links and in a pop-up. Once you're signed in to it, the link to your unread articles stays.
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "InstapaperAboutJit::maybeShow()"
+      - ReplaceBytes: {Offset: 0, FindH: "2DE9F04F", ReplaceH: "00207047"}  # push.w -> movs r0, #0; bx lr
+      - BaseAddress: "ActivityManager::smartLinkGeneralMessage(Device const&)"
+      - ReplaceBytes: {Offset: 0x4E6, FindH: "0123", CheckOnly: true}  # movs r3, #1: Instapaper
+      - ReplaceBytes: {Offset: 0x4F0, ReplaceInstNOP: true, FindInstBLX: {SymPLT: "QVector<SmartLinkType>::append(SmartLinkType const&)"}}
+
+  # HomePageController::maybeShowKoboPlusPromo shows Kobo Plus's current deal as a pop-up on Home,
+  # and returns whether it did. This returns 0 straight away.
+  - id: no-kobo-plus-promo
+    title: No Kobo Plus pop-up on the home screen
+    category: Ads and upsells
+    description: Stops Home showing Kobo Plus offers in a pop-up.
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "HomePageController::maybeShowKoboPlusPromo()"
+      - ReplaceBytes: {Offset: 0, FindH: "2DE9F04F", ReplaceH: "00207047"}  # push.w -> movs r0, #0; bx lr
+
+  # NewN3EndOfBookView::addRelatedContents shows relatedContainer unless parental controls are
+  # on. This makes its setVisible always get false.
+  - id: no-end-of-book-recommendations
+    title: No recommendations at the end of a book
+    category: Ads and upsells
+    description: Hides the books Kobo suggests after the last page. Your rating and review stay.
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "NewN3EndOfBookView::addRelatedContents(Volume const&, QSharedPointer<NextReadDataProvider>)"
+      - ReplaceBytes: {Offset: 0x1C, FindInstBLX: {SymPLT: "Device::isParentalControlEnabled() const"}, CheckOnly: true}
+      - ReplaceBytes: {Offset: 0x20, FindH: "80F00101", ReplaceH: "002100BF"}  # eor r1, r0, #1 -> movs r1, #0
 
   # MainNavView::updateVisibleButtons decides which bottom bar buttons show. These make the
   # setVisible call for the discover button, the fifth button setupUi creates, always get false.
   - id: no-discover
     title: No Discover button
-    category: "Hide Kobo's promotions"
+    category: Ads and upsells
     description: Hides Discover, with Kobo Plus and the store, from the bottom bar. Your books and Google Drive stay.
     file: libnickel.so.1.0.0
     per_firmware:
@@ -130,7 +260,7 @@ patches:
   # wishlistButton at 0x10 and articlesButton at 0x20, and these make their setVisible get false.
   - id: no-more-extras
     title: No My Wishlist or My Articles
-    category: "Hide Kobo's promotions"
+    category: Ads and upsells
     description: Hides both from the More page. Everything else on that page stays.
     file: libnickel.so.1.0.0
     per_firmware:
@@ -155,6 +285,38 @@ patches:
     file: libnickel.so.1.0.0
     community: Allow USB storage even when device locked
 
+  # Device::supportsGoogleDrive and supportsDropbox decide by model whether Kobo offers them. These
+  # make them return true, with the settings Kobo has on the models that have them. Kobo Patcher
+  # writes the settings through Kobo's own Settings, so More follows straight away. Only offered on
+  # the Nia for now, through only_on: the Libra Colour has both already.
+  - id: google-drive
+    title: Google Drive in the More menu
+    category: Cloud storage
+    description: Turns off the device-model check that hides Google Drive, and adds the Google Drive settings.
+    only_on: google_drive
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "Device::supportsGoogleDrive() const"
+      - ReplaceBytes: {Offset: 0, FindH: "98B5 0121 00AF", ReplaceH: "00B5 0120 00BD"}  # -> push {lr}; movs r0, #1; pop {pc}
+    settings:
+      - {key: FeatureSettings/GoogleDrive, value: "1", when_off: "0"}
+      - {key: OneStoreServices/kobo_googledrive_link_account_enabled, value: "True"}
+      - {key: OneStoreServices/googledrive_link_account_start, value: "https://authorize.kobo.com/{region}/{language}/linkcloudstorage/provider/google_drive"}
+
+  - id: dropbox
+    title: Dropbox in the More menu
+    category: Cloud storage
+    description: Turns off the device-model check that hides Dropbox, and adds the Dropbox settings.
+    only_on: dropbox
+    file: libnickel.so.1.0.0
+    steps:
+      - BaseAddress: "Device::supportsDropbox() const"
+      - ReplaceBytes: {Offset: 0, FindH: "98B5 0121 00AF", ReplaceH: "00B5 0120 00BD"}  # -> push {lr}; movs r0, #1; pop {pc}
+    settings:
+      - {key: FeatureSettings/Dropbox, value: "1", when_off: "0"}
+      - {key: OneStoreServices/kobo_dropbox_link_account_enabled, value: "True"}
+      - {key: OneStoreServices/dropbox_link_account_poll, value: "https://authorize.kobo.com/{region}/{language}/LinkDropbox"}
+
   # These two change the same home screen styles, so only one can be chosen. The footer-only
   # community patch doesn't fit: its result comes out 3 bytes too big for the firmware's space.
   - id: home-covers
@@ -167,7 +329,7 @@ patches:
 
   - id: no-home-footer-covers
     title: No Kobo Plus footer, and larger home screen covers
-    category: Covers
+    category: Ads and upsells
     description: Removes the row that says "Find your next book in Kobo Plus or our store", and makes covers bigger.
     group: home-layout
     file: nickel
@@ -193,7 +355,7 @@ patches:
   - id: book-language-dictionaries
     title: Dictionaries for every book language
     category: Reading
-    description: Picks a dictionary by the book's own language, even one Kobo doesn't list, like Russian. Without one it uses the usual dictionary.
+    description: Picks a dictionary by the book's own language, even one Kobo doesn't list. Without one it uses the usual dictionary.
     file: libnickel.so.1.0.0
     steps:
       - BaseAddress: "SupportedLocales::localeForVolume(Volume const&)"

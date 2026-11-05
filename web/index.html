@@ -87,6 +87,37 @@
     margin-left: 4px; padding: 1px 6px; font-size: 12px; font-style: normal; font-weight: 600;
     color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; vertical-align: 1px;
   }
+  .dictionaries { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .hint { margin: 0; color: var(--muted); font-size: 15px; }
+  .hint[hidden] { display: none; }
+  .dictionaries h3 { margin: 0 0 4px; font-size: 15px; }
+  .dictionaries h3 span { margin-left: 4px; color: var(--muted); font-size: 14px; font-weight: 400; }
+  .dictionaries p { color: var(--muted); font-size: 14px; line-height: 1.4; }
+  .dictionaries code { font-size: 13px; }
+  .dictionaries .get { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; }
+  /* The browser's own caret doesn't match the page, so it's drawn: two lines meeting in a point. */
+  .dictionaries select {
+    flex: 1 1 180px; min-width: 0; min-height: 44px; padding: 9px 36px 9px 12px; font: inherit; color: var(--text);
+    appearance: none; border: 1px solid var(--muted); border-radius: 7px; cursor: pointer;
+    background:
+      linear-gradient(45deg, transparent 50%, var(--muted) 50%) no-repeat calc(100% - 20px) 50% / 6px 6px,
+      linear-gradient(135deg, var(--muted) 50%, transparent 50%) no-repeat calc(100% - 14px) 50% / 6px 6px,
+      var(--card);
+  }
+  .dictionaries select:hover { border-color: var(--accent); }
+  .dictionaries select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dictionaries .get .button { display: inline-flex; align-items: center; min-height: 44px; }
+  .dictionaries .source { margin-bottom: 12px; font-size: 13px; }
+  .dictionaries .source a { color: var(--accent); }
+  .button {
+    display: inline-block; padding: 9px 16px; font-weight: 600; text-decoration: none;
+    color: var(--text); border: 1px solid var(--muted); border-radius: 7px;
+  }
+  .button:hover, button:not(:disabled):hover { border-color: var(--accent); }
+  .drop.small { padding: 18px 16px; font-size: 15px; }
+  #pack-rows { display: flex; flex-direction: column; gap: 14px; margin: 14px 0; }
+  #pack-rows:empty { display: none; }
+  .drop:has(input:disabled) { cursor: not-allowed; }
   .fine { margin-top: 20px; color: var(--muted); font-size: 14px; }
   .fine a { color: inherit; }
 </style>
@@ -112,7 +143,38 @@
 
   <section id="step-patches" class="locked">
     <h2><span>2</span>Patches</h2>
+    <p class="hint" id="patches-hint">Select your Kobo above, and the patches for its model and firmware show here.</p>
     <div id="patches"></div>
+    <div class="dictionaries" id="dictionaries">
+      <h3>Dictionaries <span>optional</span></h3>
+      <p>For a language Kobo has no dictionary for. Download one, then choose it below. It goes in
+        <code>.kobo/custom-dict</code>, and shows as Custom in the Kobo's dictionary settings.</p>
+      <div class="get">
+        <select id="dictionary-language" aria-label="Dictionary language"></select>
+        <a class="button" id="dictionary-download" rel="noopener">Download</a>
+      </div>
+      <p class="source">Free dictionaries made from Wiktionary by <a href="https://www.reader-dict.com" rel="noopener">reader.dict</a>.
+        Any other in Kobo's format works too.</p>
+      <label class="drop small" id="dictionary-drop">
+        <input type="file" id="dictionary-files" accept=".zip" multiple disabled aria-label="Dictionary files">
+        Drop dictionaries here, or click to choose them
+        <small>Zip files named dicthtml- and a language code. Kobo's own dictionaries come from its Settings instead.</small>
+      </label>
+      <p class="status" id="dictionary-status" role="status"></p>
+    </div>
+    <div class="dictionaries" id="packs">
+      <h3>Your own mods and patches <span>optional</span></h3>
+      <p>A pack is a zip of mods and patches someone made with <code>tools/pack.py</code>. Only add one
+        from someone you trust: a mod can do anything on your Kobo, and this site doesn't check what it does.
+        Its patches show in Kobo Patcher under the pack's name.</p>
+      <div id="pack-rows"></div>
+      <label class="drop small" id="pack-drop">
+        <input type="file" id="pack-files" accept=".zip" multiple disabled aria-label="Pack files">
+        Drop packs here, or click to choose them
+        <small>Zip files with a kobo-pack.txt in them. Only what's for this Kobo is used.</small>
+      </label>
+      <p class="status" id="pack-status" role="status"></p>
+    </div>
   </section>
 
   <section id="step-firmware" class="locked">

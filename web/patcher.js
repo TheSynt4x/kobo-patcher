@@ -7,35 +7,14 @@ const NICKEL_BIN_PATH = "./usr/local/Kobo/nickel";
 const RECORD = "kobo-patcher.json";
 // Nickel loads every Qt plugin here, which is how a mod starts.
 const modPath = (id) => `./usr/local/Kobo/imageformats/lib${id}.so`;
-const DRIVE_CHECK = "_ZNK6Device19supportsGoogleDriveEv";
-const DROPBOX_CHECK = "_ZNK6Device15supportsDropboxEv";
-const CHECK_START = [0x98, 0xb5, 0x01, 0x21, 0x00, 0xaf];
-const CHECK_TRUE = [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]; // push {lr}; movs r0,#1; pop {pc}
-const DROPBOX_SETTINGS = [
-  ["FeatureSettings", "Dropbox", "1"],
-  ["OneStoreServices", "kobo_dropbox_link_account_enabled", "True"],
-  ["OneStoreServices", "dropbox_link_account_poll", "https://authorize.kobo.com/{region}/{language}/LinkDropbox"],
-];
-const DRIVE_SETTINGS = [
-  ["FeatureSettings", "GoogleDrive", "1"],
-  ["OneStoreServices", "kobo_googledrive_link_account_enabled", "True"],
-  ["OneStoreServices", "googledrive_link_account_start",
-    "https://authorize.kobo.com/{region}/{language}/linkcloudstorage/provider/google_drive"],
-];
-
 // A firmware is known by the hash of its libnickel, so a renamed zip still works
 // and a different build with the same version number doesn't.
 export const SUPPORTED = Object.fromEntries(
   FIRMWARE.filter((build) => build.nickelSha256).map((build) => [build.nickelSha256, build]),
 );
 
-const PATCH_CODE = {
-  "google-drive": { apply: patchDriveCheck, settings: DRIVE_SETTINGS },
-  dropbox: { apply: patchDropboxCheck, settings: DROPBOX_SETTINGS },
-};
-
-export const PATCHES = REGISTRY.filter((item) => item.kind === "patch")
-  .map((item) => ({ settings: [], ...item, ...PATCH_CODE[item.id] }));
+// Each patch's settings for Kobo eReader.conf, as [section, key, value], come from patches.yaml.
+export const PATCHES = REGISTRY.filter((item) => item.kind === "patch").map((item) => ({ settings: [], offSettings: [], ...item }));
 
 export class Refused extends Error {}
 
@@ -57,16 +36,6 @@ function concat(chunks, size) {
     at += chunk.length;
   }
   return out;
-}
-
-function indexOfBytes(haystack, needle) {
-  outer: for (let i = 0; i <= haystack.length - needle.length; i++) {
-    for (let j = 0; j < needle.length; j++) {
-      if (haystack[i + j] !== needle[j]) continue outer;
-    }
-    return i;
-  }
-  return -1;
 }
 
 export async function sha256(bytes) {
@@ -206,60 +175,96 @@ export async function readKOReader(file) {
   return { version: release.version, file, entries };
 }
 
-// Where an exported function starts in a 32-bit little-endian ELF file, or null.
-export function functionOffset(elf, name) {
-  const magic = [0x7f, 0x45, 0x4c, 0x46, 0x01, 0x01];
-  if (!magic.every((b, i) => elf[i] === b)) {
-    throw new Refused("libnickel isn't the 32-bit ARM file this patch expects");
+// A dictionary in Kobo's own format: a zip of its word list and pages, named for its language,
+// such as dicthtml-de.zip, or dicthtml-de-en.zip for one between two. Kobo finds those in
+// .kobo/custom-dict by name and shows them as "(Custom)", apart from the ones Kobo downloads.
+// One named with the same language twice, as reader.dict's are, is saved as Kobo names its own.
+const DICTIONARY_NAME = /^dicthtml-([a-z]{2,3}(?:-[a-z]{2,3})?)\.zip$/i;
+
+export async function readDictionary(file) {
+  const match = DICTIONARY_NAME.exec(file.name);
+  if (!match) {
+    throw new Refused(`"${file.name}" isn't named like a Kobo dictionary: dicthtml-, then its language code, then .zip`);
   }
-  const view = new DataView(elf.buffer, elf.byteOffset, elf.byteLength);
-  const u16 = (at) => view.getUint16(at, true);
-  const u32 = (at) => view.getUint32(at, true);
-  const [phoff, shoff] = [u32(28), u32(32)];
-  const [phsize, phnum, shsize, shnum] = [u16(42), u16(44), u16(46), u16(48)];
-  const section = (i) => {
-    const at = shoff + i * shsize;
-    return { kind: u32(at + 4), offset: u32(at + 16), size: u32(at + 20), link: u32(at + 24) };
-  };
-  let dynsym = null;
-  for (let i = 0; i < shnum && !dynsym; i++) {
-    if (section(i).kind === 11) dynsym = section(i);
+  const names = (await zipEntries(file)).map((entry) => entry.name);
+  if (!names.includes("words") || !names.some((name) => name.endsWith(".html"))) {
+    throw new Refused(`"${file.name}" isn't a Kobo dictionary: it has no word list and pages`);
   }
-  if (!dynsym) return null;
-  const strings = section(dynsym.link);
-  const table = elf.subarray(strings.offset, strings.offset + strings.size);
-  const found = indexOfBytes(table, encoder.encode(`\0${name}\0`));
-  if (found < 0) return null;
-  for (let symbol = dynsym.offset; symbol < dynsym.offset + dynsym.size; symbol += 16) {
-    if (u32(symbol) !== found + 1) continue;
-    const address = u32(symbol + 4) & ~1; // the low bit only marks Thumb code
-    for (let i = 0; i < phnum; i++) {
-      const at = phoff + i * phsize;
-      const [kind, offset, vaddr, filesz] = [u32(at), u32(at + 4), u32(at + 8), u32(at + 16)];
-      if (kind === 1 && vaddr <= address && address < vaddr + filesz) return address - vaddr + offset;
+  const [from, to] = match[1].toLowerCase().split("-");
+  const language = to && to !== from ? `${from}-${to}` : from;
+  return { name: `dicthtml-${language}.zip`, language, file };
+}
+
+// ---- packs: someone's own mods and patches, in a zip from tools/pack.py ----
+
+// kobo-pack.txt lists what's in the zip, with each file's SHA-256 and size. Every file is checked
+// against it, and a pack that doesn't match isn't used at all. Its mods go in as the page's own do,
+// and its patches into a list of their own that Kobo Patcher reads beside its own.
+const PACK_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const RESERVED_IDS = new Set(REGISTRY.map((item) => item.id));
+const MAX_PACK_FILE = 32 << 20;
+const packListName = (packId, target) => `${packId}-${target}.txt`;
+
+async function zipEntryBytes(file, entry) {
+  if (entry.size > MAX_PACK_FILE) throw new Refused(`${entry.name} is too big for a pack`);
+  return readBlob(await new Response(await zipEntryStream(file, entry)).blob());
+}
+
+// The part of a pack for this Kobo: { id, version, name, author, mods: [{ id, data, sha256 }],
+// list: { name, text } or null }. Refuses a pack that isn't whole, or has nothing for this Kobo.
+export async function readPack(file, kobo) {
+  const entries = new Map((await zipEntries(file)).map((entry) => [entry.name, entry]));
+  const bad = (why) => new Refused(`"${file.name}" ${why}`);
+  if (!entries.has("kobo-pack.txt")) throw bad("isn't a pack: it has no kobo-pack.txt");
+  const lines = new TextDecoder().decode(await zipEntryBytes(file, entries.get("kobo-pack.txt")))
+    .split("\n").map((line) => line.replace(/\r$/, "")).filter(Boolean).map((line) => line.split("\t"));
+  if (lines[0]?.join("\t") !== "kobo-pack\t1") throw bad("isn't a pack this page can read");
+  const here = `${kobo.model}-${kobo.firmware}`;
+  let pack = null;
+  const mods = [];
+  let list = null;
+  for (const fields of lines.slice(1)) {
+    const [kind] = fields;
+    if (kind === "pack" && fields.length === 5 && !pack) {
+      const [, id, version, name, author] = fields;
+      if (!PACK_ID.test(id) || RESERVED_IDS.has(id) || !name) throw bad(`has a pack id or name this page can't use: ${id}`);
+      pack = { id, version, name, author };
+    } else if (kind === "mod" && fields.length === 5) {
+      const [, id, hash, size, targets] = fields;
+      if (!PACK_ID.test(id) || RESERVED_IDS.has(id)) throw bad(`has a mod this page can't install: ${id}`);
+      if (mods.some((mod) => mod.id === id)) throw bad(`has the ${id} mod twice`);
+      mods.push({ id, sha256: hash, size: Number(size), targets: targets.split(",") });
+    } else if (kind === "list" && fields.length === 4) {
+      const [, target, hash, size] = fields;
+      if (target === here) list = { sha256: hash, size: Number(size) };
+    } else {
+      throw bad(`has a line this page doesn't know: ${fields[0]}`);
     }
   }
-  return null;
-}
-
-// Make a device-model check return true. Refuses code it doesn't know.
-function patchCheck(nickel, symbol, name) {
-  const offset = functionOffset(nickel, symbol);
-  if (offset === null) throw new Refused(`this firmware has no ${name} device check to patch`);
-  if (!CHECK_START.every((b, i) => nickel[offset + i] === b)) {
-    throw new Refused(`the ${name} check has changed in this firmware, so it needs a new patch`);
+  if (!pack) throw bad("doesn't say what it is");
+  const check = async (path, wanted) => {
+    const entry = entries.get(path);
+    if (!entry) throw bad(`is missing ${path}`);
+    const data = await zipEntryBytes(file, entry);
+    if (data.length !== wanted.size || await sha256(data) !== wanted.sha256) throw bad(`has a ${path} that isn't what it says`);
+    return data;
+  };
+  const ours = [];
+  for (const mod of mods) {
+    if (!mod.targets.includes(here)) continue;
+    ours.push({ id: mod.id, data: await check(`mods/lib${mod.id}.so`, mod), sha256: mod.sha256 });
   }
-  const out = nickel.slice();
-  out.set(CHECK_TRUE, offset);
-  return out;
-}
-
-export function patchDriveCheck(nickel) {
-  return patchCheck(nickel, DRIVE_CHECK, "Google Drive");
-}
-
-export function patchDropboxCheck(nickel) {
-  return patchCheck(nickel, DROPBOX_CHECK, "Dropbox");
+  if (list) {
+    const text = new TextDecoder().decode(await check(`lists/${here}.txt`, list));
+    const head = text.split("\n", 2);
+    if (head[0] !== "kobo-patcher-list\t2" || !head[1]?.startsWith(`firmware\t${kobo.model}\t${kobo.firmware}\t`)) {
+      throw bad("has patches that aren't for this Kobo");
+    }
+    if (listIds(text).some((id) => !id.startsWith(`${pack.id}.`))) throw bad(`has patches that aren't named ${pack.id}.something`);
+    list = { name: packListName(pack.id, here), text };
+  }
+  if (!ours.length && !list) throw bad(`has nothing for this Kobo, a ${kobo.model} on ${kobo.firmware}`);
+  return { ...pack, mods: ours, list };
 }
 
 // Set key=value in an INI-style section, keeping the file's other lines.
@@ -569,15 +574,12 @@ export async function inspectKobo(root) {
   }
   let adds = null;
   if (await dirExists(root, ".adds")) adds = await root.getDirectoryHandle(".adds");
-  const record = adds ? await readRecord(adds, version.firmware) : { patches: [], mods: {} };
+  const record = adds ? await readRecord(adds, version.firmware) : { patches: [], mods: {}, packs: {} };
   const kobopatcher = adds && await dirExists(adds, "patches") ? await adds.getDirectoryHandle("patches") : null;
   const installed = {
-    // An empty nm folder is what's left after NickelMenu uninstalls itself.
-    nickelmenu: !!adds && await dirExists(adds, "nm")
-      && await exists(await adds.getDirectoryHandle("nm"), "doc")
-      && !await exists(await adds.getDirectoryHandle("nm"), "uninstall"),
     patches: record.patches,
     mods: record.mods,
+    packs: record.packs,
     koreader: !!adds && await dirExists(adds, "koreader"),
     // What Kobo Patcher on the Kobo has: the patches switched there, and its list for this firmware.
     choices: kobopatcher ? await readChoices(kobopatcher) : {},
@@ -635,17 +637,18 @@ function systemFiles(firmware) {
 // mods: [{ id, data, sha256 }] to add. remove.mods: ids to remove the next time Nickel starts.
 // mod: { list: { name, text }, choices: { id: on } } for Kobo Patcher to switch those patches on the
 // Kobo, from its list in .adds/patches/lists, instead of them going into the system files.
-export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null } = {}) {
+// on: every patch that's ticked, however it's put on, for its settings. off: the patches with
+// settings that were on and are now unticked, which get their when_off values, as in Kobo Patcher.
+// packs: from readPack, to add. removePacks: ids of installed packs to take off, mods and list.
+// installedPacks: the record's packs, for what each of those has.
+export function planPatch(firmware, patchIds, { koreader = null, edits = {}, remove = null, mods = [], mod = null, dictionaries = [], on = patchIds, off = [],
+  packs = [], removePacks = [], installedPacks = {} } = {}) {
   const chosen = PATCHES.filter((patch) => patchIds.includes(patch.id));
   if (chosen.length && !firmware) throw new Refused("patches need the firmware file");
   const files = [];
   if (firmware) {
     const current = { [NICKEL_PATH]: firmware.libnickel, [NICKEL_BIN_PATH]: firmware.nickel };
     for (const patch of chosen) {
-      if (patch.apply) {
-        current[NICKEL_PATH] = patch.apply(current[NICKEL_PATH]);
-        continue;
-      }
       if (!edits[patch.id]) throw new Refused(`"${patch.title}" isn't available for this firmware`);
       for (const path of new Set(edits[patch.id].map((edit) => edit.file))) {
         const part = edits[patch.id].filter((edit) => edit.file === path);
@@ -654,46 +657,94 @@ export function planPatch(firmware, patchIds, { koreader = null, edits = {}, rem
     }
     files.push(...systemFiles({ libnickel: current[NICKEL_PATH], nickel: current[NICKEL_BIN_PATH] }));
   }
-  for (const each of mods) files.push({ path: modPath(each.id), data: each.data, mode: 0o755 });
+  const packMods = packs.flatMap((pack) => pack.mods);
+  const taken = new Set(mods.map((each) => each.id));
+  for (const each of packMods) {
+    if (taken.has(each.id)) throw new Refused(`two of the mods to add are called ${each.id}`);
+    taken.add(each.id);
+  }
+  const allMods = [...mods, ...packMods];
+  for (const each of allMods) files.push({ path: modPath(each.id), data: each.data, mode: 0o755 });
   const storage = [];
+  for (const pack of packs) {
+    if (pack.list) storage.push({ dir: ["patches", "lists", "custom"], name: pack.list.name, data: encoder.encode(pack.list.text) });
+  }
+  const leaving = removePacks.filter((id) => installedPacks[id] && !packs.some((pack) => pack.id === id));
+  const leavingMods = leaving.flatMap((id) => installedPacks[id].mods ?? []);
+  const leavingLists = leaving.map((id) => installedPacks[id].list).filter(Boolean);
+  if (leavingMods.length || leavingLists.length) {
+    remove = { ...remove, mods: [...new Set([...(remove?.mods ?? []), ...leavingMods])], lists: leavingLists };
+  }
+  // A pack added again replaces what the earlier one had.
+  for (const pack of packs) {
+    const before = installedPacks[pack.id];
+    const gone = (before?.mods ?? []).filter((id) => !pack.mods.some((each) => each.id === id));
+    const list = before?.list && before.list !== pack.list?.name ? [before.list] : [];
+    if (gone.length || list.length) {
+      remove = { ...remove, mods: [...new Set([...(remove?.mods ?? []), ...gone])], lists: [...(remove?.lists ?? []), ...list] };
+    }
+  }
+  const packChange = Object.fromEntries([
+    ...leaving.map((id) => [id, null]),
+    ...packs.map((pack) => [pack.id, { name: pack.name, version: pack.version, mods: pack.mods.map((each) => each.id), list: pack.list?.name ?? null }]),
+  ]);
   if (mod) {
     const choices = Object.entries(mod.choices).map(([id, on]) => `${id} ${on ? "on" : "off"}\n`).join("");
     storage.push({ dir: ["patches", "lists"], name: mod.list.name, data: encoder.encode(mod.list.text) });
     storage.push({ dir: ["patches"], name: "choices.txt", data: encoder.encode(choices) });
   }
   return {
-    settings: chosen.flatMap((patch) => patch.settings),
+    settings: [
+      ...PATCHES.filter((patch) => off.includes(patch.id) && !on.includes(patch.id)).flatMap((patch) => patch.offSettings),
+      ...PATCHES.filter((patch) => on.includes(patch.id)).flatMap((patch) => patch.settings),
+    ],
     files,
     storage,
     koreader,
+    dictionaries,
     remove,
-    installsMods: mods.map((mod) => mod.id),
-    record: recordChange(firmware ? patchIds : null, mods, remove?.mods ?? []),
+    installsMods: allMods.map((each) => each.id),
+    record: recordChange(firmware ? patchIds : null, allMods, remove?.mods ?? [], packChange),
   };
 }
 
-// What to change in the record: patches only when they were rebuilt, and each mod added or removed.
-function recordChange(patches, added, removed) {
+// What to change in the record: patches only when they were rebuilt, each mod added or removed,
+// and each pack added or removed.
+function recordChange(patches, added, removed, packs = {}) {
   const mods = Object.fromEntries([
     ...removed.map((id) => [id, null]),
     ...added.map((mod) => [mod.id, mod.sha256]),
   ]);
-  if (!patches && !Object.keys(mods).length) return null;
-  return { ...(patches && { patches }), mods };
+  if (!patches && !Object.keys(mods).length && !Object.keys(packs).length) return null;
+  return { ...(patches && { patches }), mods, ...(Object.keys(packs).length && { packs }) };
 }
 
 // Removes what the page can add, and puts Kobo's original system files back if given the firmware.
 export function planUndo(firmware, installed) {
   const mods = Object.keys(installed.mods ?? {});
+  const packs = installed.packs ?? {};
   return {
     settings: [],
     files: firmware ? systemFiles(firmware) : [],
     storage: [],
     koreader: null,
-    remove: { ...installed, mods },
+    // Dictionaries stay: they're the user's own files, and harmless without the patches.
+    dictionaries: [],
+    remove: { ...installed, mods, lists: Object.values(packs).map((pack) => pack.list).filter(Boolean) },
     installsMods: [],
-    record: recordChange(firmware ? [] : null, [], mods),
+    record: recordChange(firmware ? [] : null, [], mods, Object.fromEntries(Object.keys(packs).map((id) => [id, null]))),
   };
+}
+
+async function copyDictionaries(dot, dictionaries, progress) {
+  const dir = await dot.getDirectoryHandle("custom-dict", { create: true });
+  for (const [i, dictionary] of dictionaries.entries()) {
+    progress(`Copying dictionaries: ${i + 1} of ${dictionaries.length}…`);
+    const writable = await (await dir.getFileHandle(dictionary.name, { create: true })).createWritable();
+    await writable.write(dictionary.file);
+    await writable.close();
+  }
+  await cleanMacFiles(dir);
 }
 
 async function copyKOReader(root, koreader, progress) {
@@ -730,20 +781,23 @@ async function removeAddons(root, remove) {
   if (remove.koreader && await dirExists(adds, "koreader")) {
     throw new Refused("KOReader's folder is still on the Kobo after removing it");
   }
-  if (remove.nickelmenu && !await exists(await adds.getDirectoryHandle("nm"), "uninstall")) {
-    throw new Refused("couldn't leave NickelMenu's uninstall file on the Kobo");
+  // A pack's patches go with its list: Kobo Patcher only has them in memory until it restarts.
+  for (const name of remove.lists ?? []) {
+    const custom = await folderAt(adds, ["patches", "lists", "custom"]);
+    if (custom && await exists(custom, name)) await custom.removeEntry(name);
   }
+}
+
+async function folderAt(dir, path) {
+  for (const part of path) {
+    if (!await dirExists(dir, part)) return null;
+    dir = await dir.getDirectoryHandle(part);
+  }
+  return dir;
 }
 
 async function removeFromAdds(adds, remove) {
   if (remove.koreader) await adds.removeEntry("koreader", { recursive: true });
-  if (!await dirExists(adds, "nm")) return;
-  const nm = await adds.getDirectoryHandle("nm");
-  // The menu entry this page used to add for KOReader, before Kobo Patcher put it in More.
-  if (remove.koreader && await exists(nm, "koreader")) await nm.removeEntry("koreader");
-  // NickelMenu removes itself when it finds this file on the next restart.
-  if (remove.nickelmenu) await writeFile(nm, "uninstall", new Uint8Array(0));
-  await cleanMacFiles(nm);
 }
 
 // Folders to leave out of a backup: the computer's, not the Kobo's.
@@ -806,6 +860,7 @@ async function readRecord(adds, firmware) {
     patches: record.firmware === firmware && Array.isArray(record.patches) ? record.patches : [],
     // But it only adds files, so a mod stays.
     mods: record.mods && typeof record.mods === "object" ? record.mods : {},
+    packs: record.packs && typeof record.packs === "object" ? record.packs : {},
   };
 }
 
@@ -815,8 +870,9 @@ async function saveRecord(root, firmware, change) {
   const before = await readRecord(adds, firmware);
   const patches = change.patches ?? before.patches;
   const mods = Object.fromEntries(Object.entries({ ...before.mods, ...change.mods }).filter(([, sha]) => sha));
-  if (patches.length || Object.keys(mods).length) {
-    await writeFile(adds, RECORD, encoder.encode(JSON.stringify({ firmware, patches, mods })));
+  const packs = Object.fromEntries(Object.entries({ ...before.packs, ...change.packs }).filter(([, pack]) => pack));
+  if (patches.length || Object.keys(mods).length || Object.keys(packs).length) {
+    await writeFile(adds, RECORD, encoder.encode(JSON.stringify({ firmware, patches, mods, ...(Object.keys(packs).length && { packs }) })));
   } else if (await exists(adds, RECORD)) {
     await adds.removeEntry(RECORD);
   }
@@ -837,8 +893,9 @@ export async function writeToKobo(root, plan, progress = () => {}) {
     await cleanMacFiles(dir);
   }
   if (plan.koreader) await copyKOReader(root, plan.koreader, progress);
-  const removing = plan.remove?.koreader || plan.remove?.nickelmenu || !!plan.remove?.mods?.length;
-  if (!plan.files.length && !plan.koreader && !plan.settings.length && !plan.storage?.length && !removing) {
+  if (plan.dictionaries?.length) await copyDictionaries(dot, plan.dictionaries, progress);
+  const removing = plan.remove?.koreader || !!plan.remove?.mods?.length || !!plan.remove?.lists?.length;
+  if (!plan.files.length && !plan.koreader && !plan.dictionaries?.length && !plan.settings.length && !plan.storage?.length && !removing) {
     throw new Refused("there's nothing to change, so nothing was written");
   }
   if (removing) await removeAddons(root, plan.remove);

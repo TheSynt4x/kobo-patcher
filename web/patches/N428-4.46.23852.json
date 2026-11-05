@@ -225,14 +225,156 @@
    "at": 14273648,
    "find": "58b1",
    "replace": "00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14242310,
+   "find": "e7f45ae6",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14242330,
+   "find": "e7f450e6",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14242350,
+   "find": "e7f446e6",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14271574,
+   "find": "83b3",
+   "replace": "30e0"
+  }
+ ],
+ "home-tile-my-books": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14293670,
+   "find": "40f00d81",
+   "replace": "aff30080"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14293700,
+   "find": "d7f43ae5",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14296136,
+   "find": "98b5044600affff482e704f15800bd46bde89840e3f4d6b4",
+   "replace": "10b508f09dfa32f1c3fd006910b118305cf144f810bd00bf"
   }
  ],
  "no-kobo-plus": [
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9812062,
+   "find": "40f11482",
+   "replace": "aff30080"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9812080,
+   "find": "26f54eec",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9812240,
+   "find": "26f5feeb",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9812306,
+   "find": "26f5deeb",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
    "at": 9812332,
    "find": "26f5d0eb",
    "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9813538,
+   "find": "26f576e9",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9813606,
+   "find": "26f554e9",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9796100,
+   "find": "2af584eb",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14326834,
+   "find": "50d0",
+   "replace": "00bf"
+  }
+ ],
+ "no-overdrive-links": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9813468,
+   "find": "26f598e9",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9796070,
+   "find": "2af594eb",
+   "replace": "00bf00bf"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9795946,
+   "find": "2af5d2eb",
+   "replace": "00bf00bf"
+  }
+ ],
+ "no-instapaper-links": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 17968832,
+   "find": "2de9f04f",
+   "replace": "00207047"
+  },
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 9813276,
+   "find": "26f5f8e9",
+   "replace": "00bf00bf"
+  }
+ ],
+ "no-kobo-plus-promo": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 14237636,
+   "find": "2de9f04f",
+   "replace": "00207047"
+  }
+ ],
+ "no-end-of-book-recommendations": [
+  {
+   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
+   "at": 13233616,
+   "find": "80f00101",
+   "replace": "002100bf"
   }
  ],
  "no-discover": [

@@ -10,8 +10,8 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
-  PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, patchDriveCheck, patchDropboxCheck, planPatch, planUndo, readFirmware, readKOReader, writeZip,
-  listIds, readNickel, setConf, sha256, writeToKobo,
+  PATCHES, Refused, SUPPORTED, UnsupportedFirmware, inspectKobo, buildPackage, buildZip, planPatch, planUndo, readFirmware, readKOReader, writeZip,
+  listIds, readDictionary, readNickel, readPack, setConf, sha256, writeToKobo,
 } from "../web/patcher.js";
 import { CATEGORIES, FIRMWARE, REGISTRY, registryFor } from "../web/supported.js";
 
@@ -57,6 +57,18 @@ def fake(path, start):
         z.writestr("KoboRoot.tgz", root.getvalue())
 `;
 
+// The Drive patch's edit for a made-up firmware, where its check starts with these bytes, as
+// patches.yaml has it for real ones.
+const DRIVE_START = "98b5012100af";
+function driveEdits(nickel) {
+  const at = Buffer.from(nickel).indexOf(Buffer.from(DRIVE_START, "hex"));
+  return { "google-drive": [{ file: NICKEL, at, find: DRIVE_START, replace: "00b5012000bd" }] };
+}
+
+// The real firmware's compiled edits.
+const realEdits = () => JSON.parse(readFileSync(join(repo, "web/patches/N306-4.38.23852.json"), "utf8"));
+const patchedFile = (plan) => plan.files.find((file) => file.path === NICKEL).data;
+
 function fakeFirmware(name, startHex) {
   const path = join(work, name);
   python(`${FAKE}\nfake(sys.argv[1], bytes.fromhex(sys.argv[2]))`, path, startHex);
@@ -66,7 +78,7 @@ function fakeFirmware(name, startHex) {
 test("reads, patches and packages a made-up firmware as expected", async () => {
   const path = fakeFirmware("good.zip", "98B5012100AF");
   const nickel = await readNickel(await openAsBlob(path));
-  const patched = patchDriveCheck(nickel);
+  const patched = patchedFile(planPatch({ libnickel: nickel }, ["google-drive"], { edits: driveEdits(nickel) }));
   const packaged = await buildPackage([{ path: NICKEL, data: patched, mode: 0o775 }], MTIME);
   writeFileSync(join(work, "tar"), gunzipSync(packaged));
   const expected = ["42891cb5f78fa7b437370798c023ced18d89172feab687a603ce5db692b767ac",
@@ -92,7 +104,8 @@ with tarfile.open(sys.argv[1]) as tar:
 test("refuses a check it doesn't recognise and files that aren't firmware", async () => {
   const changed = fakeFirmware("changed.zip", "10B500000000");
   const nickel = await readNickel(await openAsBlob(changed));
-  assert.throws(() => patchDriveCheck(nickel), Refused);
+  const elsewhere = { "google-drive": [{ file: NICKEL, at: 0, find: DRIVE_START, replace: "00b5012000bd" }] };
+  assert.throws(() => planPatch({ libnickel: nickel }, ["google-drive"], { edits: elsewhere }), Refused);
   writeFileSync(join(work, "junk.zip"), "not a zip");
   await assert.rejects(readNickel(await openAsBlob(join(work, "junk.zip"))), Refused);
   const noRoot = join(work, "noroot.zip");
@@ -120,7 +133,7 @@ test("the registry only offers items on firmware it can support", () => {
   for (const build of FIRMWARE) {
     const edits = JSON.parse(readFileSync(join(repo, "web/patches", `${build.model}-${build.firmware}.json`), "utf8"));
     for (const item of registryFor(build.model, build.firmware)) {
-      if (item.kind === "patch" && !["google-drive", "dropbox"].includes(item.id)) assert.ok(edits[item.id], `${item.id}: no edits for ${build.model}`);
+      if (item.kind === "patch") assert.ok(edits[item.id], `${item.id}: no edits for ${build.model}`);
     }
   }
   assert.deepEqual(registryFor("N428", "4.38.23852"), []);
@@ -161,12 +174,11 @@ test("a package can merge several files, and only holds what was chosen", async 
   assert.deepEqual(onlyMod.settings, []);
   assert.deepEqual(onlyMod.record, { mods: { patches: "abc" } });
   assert.throws(() => planPatch(null, ["google-drive"]), Refused);
-  // KOReader no longer needs NickelMenu: Kobo Patcher starts it from More.
   assert.deepEqual(planPatch(null, [], { koreader: {} }).files, []);
   assert.equal(planUndo({ libnickel: nickel }, {}).files[0].data, nickel);
   assert.deepEqual(planPatch({ libnickel: nickel }, []).record, { patches: [], mods: {} });
 
-  const both = planPatch({ libnickel: nickel }, ["google-drive"], { mods });
+  const both = planPatch({ libnickel: nickel }, ["google-drive"], { mods, edits: driveEdits(nickel) });
   writeFileSync(join(work, "merged.tgz"), await buildPackage(both.files, MTIME));
   const listed = python(`
 import tarfile
@@ -274,7 +286,7 @@ for (const build of FIRMWARE) {
 }
 
 test("removing an add-on needs no firmware and leaves the system files alone", () => {
-  const remove = { koreader: true, nickelmenu: false };
+  const remove = { koreader: true };
   const plan = planPatch(null, [], { remove });
   assert.deepEqual(plan.files, []);
   assert.equal(plan.remove, remove);
@@ -304,6 +316,19 @@ test("setConf adds the Drive settings where they belong", () => {
   }
 });
 
+test("a patch's settings are written whenever it's ticked, even when Kobo Patcher puts it on", () => {
+  const plan = planPatch(null, [], { on: ["dropbox"] });
+  assert.deepEqual(plan.files, []);
+  assert.deepEqual(plan.settings.map(([section, key]) => `${section}/${key}`),
+    ["FeatureSettings/Dropbox", "OneStoreServices/kobo_dropbox_link_account_enabled", "OneStoreServices/dropbox_link_account_poll"]);
+  assert.deepEqual(planPatch(null, [], { on: [] }).settings, []);
+});
+
+test("a patch turned off gets its when_off values, as in Kobo Patcher, and only those", () => {
+  assert.deepEqual(planPatch(null, [], { on: [], off: ["dropbox"] }).settings, [["FeatureSettings", "Dropbox", "0"]]);
+  assert.deepEqual(planPatch(null, [], { on: ["dropbox"], off: ["dropbox"] }).settings.length, 3);
+});
+
 test("setConf keeps the line ending when it replaces a value in a CRLF file", () => {
   assert.equal(setConf("[A]\r\nx=1\r\ny=2\r\n", "A", "x", "9"), "[A]\r\nx=9\r\ny=2\r\n");
 });
@@ -323,21 +348,20 @@ with zipfile.ZipFile(sys.argv[1]) as z:
 test("the real firmware is recognised and its package is the known good one", { skip: !existsSync(REAL_FIRMWARE) }, async () => {
   const nickel = await readNickel(await openAsBlob(REAL_FIRMWARE));
   assert.equal(SUPPORTED[await sha256(nickel)]?.firmware, "4.38.23852");
-  const patched = patchDriveCheck(nickel);
+  const patched = patchedFile(planPatch({ libnickel: nickel }, ["google-drive"], { edits: realEdits() }));
   const packaged = await buildPackage([{ path: NICKEL, data: patched, mode: 0o775 }], MTIME);
   assert.equal(await sha256(gunzipSync(packaged)), "452fcb7f8560242bb6203981e72d168d871846dd1e8b8f42b57451917098827e");
 });
 
 test("the Dropbox patch changes only its check on the real firmware, and works alongside Drive", { skip: !existsSync(REAL_FIRMWARE) }, async () => {
   const nickel = await readNickel(await openAsBlob(REAL_FIRMWARE));
-  const patched = patchDropboxCheck(nickel);
+  const patched = patchedFile(planPatch({ libnickel: nickel }, ["dropbox"], { edits: realEdits() }));
   const changed = nickel.reduce((found, byte, at) => (byte === patched[at] ? found : [...found, at]), []);
   assert.deepEqual(changed, [0x96de48, 0x96de4b, 0x96de4d]);
   assert.deepEqual([...patched.subarray(0x96de48, 0x96de4e)], [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]);
-  const both = planPatch({ libnickel: nickel, nickel: new Uint8Array(1) }, ["google-drive", "dropbox"]);
+  const both = planPatch({ libnickel: nickel, nickel: new Uint8Array(1) }, ["google-drive", "dropbox"], { edits: realEdits() });
   const settings = both.settings.map(([, key]) => key);
   assert.ok(settings.includes("googledrive_link_account_start") && settings.includes("dropbox_link_account_poll"));
-  assert.throws(() => patchDropboxCheck(patched), Refused);
 });
 
 // A drive in memory, with the parts of the File System Access API the page uses.
@@ -490,10 +514,106 @@ test("removing a mod leaves its uninstall file and keeps the patches, and Undo r
   assert.ok(await readFake(kobo, ".kobo/KoboRoot.tgz"));
 });
 
-test("a record from before mods were offered still reads", async () => {
-  const kobo = await fakeKobo({ ".adds/kobo-patcher.json": JSON.stringify({ firmware: "4.38.23852", patches: ["margins"] }) });
+test("a dictionary is checked, named for its language, and copied to custom-dict, which Undo leaves", async () => {
+  const page = new TextEncoder().encode("<p>a page</p>");
+  const zip = (name, files) => new File([buildZip(files)], name);
+  const good = zip("DictHTML-RU.zip", [{ name: "words", data: new Uint8Array(8) }, { name: "aa.html", data: page }]);
+  const dictionary = await readDictionary(good);
+  assert.deepEqual([dictionary.name, dictionary.language], ["dicthtml-ru.zip", "ru"]);
+  assert.equal((await readDictionary(zip("dicthtml-ru-en.zip", [{ name: "words", data: page }, { name: "ab.html", data: page }]))).language, "ru-en");
+  // reader.dict names its own with the language twice, and it's saved as Kobo names its own.
+  const twice = await readDictionary(zip("dicthtml-de-de.zip", [{ name: "words", data: page }, { name: "ab.html", data: page }]));
+  assert.deepEqual([twice.name, twice.language], ["dicthtml-de.zip", "de"]);
+
+  await assert.rejects(readDictionary(zip("russian.zip", [{ name: "words", data: page }])), /isn't named like a Kobo dictionary/);
+  await assert.rejects(readDictionary(zip("dicthtml-sv.zip", [{ name: "readme.txt", data: page }])), /isn't a Kobo dictionary/);
+  await assert.rejects(readDictionary(new File([page], "dicthtml-de.zip")), /isn't a zip/);
+
+  const kobo = await fakeKobo({});
+  await writeToKobo(kobo, planPatch(null, [], { dictionaries: [dictionary] }));
+  assert.deepEqual(await readFake(kobo, ".kobo/custom-dict/dicthtml-ru.zip"), new Uint8Array(await good.arrayBuffer()));
+  assert.equal(await readFake(kobo, ".kobo/KoboRoot.tgz"), null);
+  assert.deepEqual(planUndo(null, (await inspectKobo(kobo)).installed).dictionaries, []);
+});
+
+// A pack as tools/pack.py makes it, with what's given changed for tests that it's refused.
+async function makePack({ id = "mine", mods = [["thing", new Uint8Array(40).fill(3)]], list = true, targets = "N306-4.38.23852", spoil = null } = {}) {
+  const enc = new TextEncoder();
+  const files = [];
+  const lines = ["kobo-pack\t1", `pack\t${id}\t2\tMy stuff\tSomeone`];
+  for (const [modId, data] of mods) {
+    files.push({ name: `mods/lib${modId}.so`, data });
+    lines.push(`mod\t${modId}\t${await sha256(data)}\t${data.length}\t${targets}`);
+  }
+  if (list) {
+    const data = enc.encode(`kobo-patcher-list\t2\nfirmware\tN306\t4.38.23852\tKobo Nia\npatch\t${id}.small\tMY STUFF\t-\t-\tSmall\t\n`
+      + "edit\t/usr/local/Kobo/libnickel.so.1.0.0\t1\t02\t01\n");
+    files.push({ name: "lists/N306-4.38.23852.txt", data });
+    lines.push(`list\tN306-4.38.23852\t${await sha256(data)}\t${data.length}`);
+  }
+  if (spoil) spoil(files, lines);
+  files.unshift({ name: "kobo-pack.txt", data: enc.encode(lines.join("\n") + "\n") });
+  return new File([buildZip(files)], `${id}.zip`);
+}
+
+const NIA = { model: "N306", firmware: "4.38.23852" };
+
+test("a pack is read whole, for this Kobo only", async () => {
+  const pack = await readPack(await makePack(), NIA);
+  assert.deepEqual([pack.id, pack.name, pack.version, pack.author], ["mine", "My stuff", "2", "Someone"]);
+  assert.deepEqual(pack.mods.map((mod) => mod.id), ["thing"]);
+  assert.equal(pack.list.name, "mine-N306-4.38.23852.txt");
+  // A mod for another Kobo is left out, and with nothing left the pack is refused.
+  const other = await readPack(await makePack({ targets: "N428-4.46.23852" }), NIA);
+  assert.deepEqual(other.mods, []);
+  await assert.rejects(readPack(await makePack({ targets: "N428-4.46.23852", list: false }), NIA), /nothing for this Kobo/);
+});
+
+test("a pack that isn't what it says, or takes the page's names, is refused", async () => {
+  const changed = (files) => { files.find((file) => file.name.endsWith(".so")).data = new Uint8Array(40).fill(4); };
+  await assert.rejects(readPack(await makePack({ spoil: changed }), NIA), /isn't what it says/);
+  const missing = (files) => files.splice(files.findIndex((file) => file.name.endsWith(".so")), 1);
+  await assert.rejects(readPack(await makePack({ spoil: missing }), NIA), /is missing mods\/libthing.so/);
+  await assert.rejects(readPack(await makePack({ mods: [["patches", new Uint8Array(4)]] }), NIA), /can't install: patches/);
+  await assert.rejects(readPack(await makePack({ id: "Bad Id" }), NIA), /pack id/);
+  const stranger = (files, lines) => lines.push("run\tsomething");
+  await assert.rejects(readPack(await makePack({ spoil: stranger }), NIA), /doesn't know: run/);
+  const foreign = (files, lines) => {
+    const text = "kobo-patcher-list\t2\nfirmware\tN306\t4.38.23852\tKobo Nia\npatch\tmargins\tX\t-\t-\tM\t\nedit\t/usr/local/Kobo/nickel\t1\t02\t01\n";
+    files.find((file) => file.name.startsWith("lists/")).data = new TextEncoder().encode(text);
+    lines.pop();
+    lines.push(`list\tN306-4.38.23852\tx\t${text.length}`);
+  };
+  await assert.rejects(readPack(await makePack({ spoil: foreign }), NIA), /isn't what it says/);
+  await assert.rejects(readPack(new File([buildZip([{ name: "a", data: new Uint8Array(1) }])], "a.zip"), NIA), /no kobo-pack.txt/);
+});
+
+test("a pack's mods go in as the page's do, its patches beside Kobo Patcher's list, and it comes off whole", async () => {
+  const kobo = await fakeKobo({ ".adds/patches/choices.txt": "mine.small on\n" });
+  const pack = await readPack(await makePack(), NIA);
+  const plan = planPatch(null, [], { packs: [pack] });
+  assert.deepEqual(plan.files.map((file) => file.path), ["./usr/local/Kobo/imageformats/libthing.so"]);
+  await writeToKobo(kobo, plan);
+  assert.equal(new TextDecoder().decode(await readFake(kobo, ".adds/patches/lists/custom/mine-N306-4.38.23852.txt")), pack.list.text);
+  assert.ok(await readFake(kobo, ".kobo/KoboRoot.tgz"));
+  await (await kobo.getDirectoryHandle(".kobo")).removeEntry("KoboRoot.tgz");
   const { installed } = await inspectKobo(kobo);
-  assert.deepEqual([installed.patches, installed.mods], [["margins"], {}]);
-  await writeToKobo(kobo, planPatch(null, [], { mods: [MOD] }));
-  assert.deepEqual(await readRecord(kobo), { firmware: "4.38.23852", patches: ["margins"], mods: { patches: "abc" } });
+  assert.deepEqual(installed.packs, { mine: { name: "My stuff", version: "2", mods: ["thing"], list: "mine-N306-4.38.23852.txt" } });
+  assert.equal(installed.mods.thing, pack.mods[0].sha256);
+
+  // Taken off: its mod's uninstall file, its list gone, and nothing left in the record.
+  await writeToKobo(kobo, planPatch(null, [], { removePacks: ["mine"], installedPacks: installed.packs }));
+  assert.ok(await readFake(kobo, ".adds/thing/uninstall"));
+  assert.equal(await readFake(kobo, ".adds/patches/lists/custom/mine-N306-4.38.23852.txt"), null);
+  assert.equal(await readFake(kobo, ".adds/kobo-patcher.json"), null);
+});
+
+test("Undo takes packs off too", async () => {
+  const kobo = await fakeKobo({});
+  await writeToKobo(kobo, planPatch(null, [], { packs: [await readPack(await makePack(), NIA)] }));
+  await (await kobo.getDirectoryHandle(".kobo")).removeEntry("KoboRoot.tgz");
+  await writeToKobo(kobo, planUndo(null, (await inspectKobo(kobo)).installed));
+  assert.ok(await readFake(kobo, ".adds/thing/uninstall"));
+  assert.equal(await readFake(kobo, ".adds/patches/lists/custom/mine-N306-4.38.23852.txt"), null);
+  assert.equal(await readFake(kobo, ".adds/kobo-patcher.json"), null);
 });

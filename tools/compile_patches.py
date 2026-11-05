@@ -167,6 +167,28 @@ def blx_target(binary, at):
     return (pc & ~3) + delta  # BLX switches to ARM, aligned
 
 
+def thumb_bl(binary, at, name):
+    """A 32-bit Thumb BL at this offset to the function with this name in the same file."""
+    delta = binary.to_address(binary.symbol(name)) - (binary.to_address(at) + 4)
+    if not -(1 << 24) <= delta < 1 << 24:
+        raise Misfit(f"{name} is too far away for a BL")
+    sign, i1, i2 = (delta >> 24) & 1, (delta >> 23) & 1, (delta >> 22) & 1
+    j1, j2 = (i1 ^ 1) ^ sign, (i2 ^ 1) ^ sign
+    upper = 0xF000 | sign << 10 | (delta >> 12) & 0x3FF
+    lower = 0xD000 | j1 << 13 | j2 << 11 | (delta >> 1) & 0x7FF
+    return struct.pack("<HH", upper, lower)
+
+
+def replacement(binary, at, value):
+    """ReplaceH's bytes: hex, where BL{name} is a Thumb BL from that place to the function name."""
+    if not isinstance(value, str):
+        return hexbytes(value)
+    out = b""
+    for i, part in enumerate(re.split(r"BL\{([^}]*)\}", value)):
+        out += thumb_bl(binary, at + len(out), part) if i % 2 else hexbytes(part)
+    return out
+
+
 def base_address(binary, value):
     if isinstance(value, int):
         return value
@@ -192,7 +214,7 @@ def patch_bytes(binary, base, spec, edits):
     if spec.get("ReplaceInstNOP"):
         replace = NOP * (len(find) // 2)
     else:
-        replace = hexbytes(spec["ReplaceH"])
+        replace = replacement(binary, at, spec["ReplaceH"])
     if len(replace) != len(find):
         raise Misfit("replacement isn't the same length")
     edits.append((at, find, replace))
@@ -343,18 +365,30 @@ def steps_for(patch, version, sources):
     return patch["per_firmware"][version]
 
 
-def main():
-    spec = yaml.safe_load((REPO / "patches.yaml").read_text())
+def check_spec(spec):
     for patch in spec["patches"]:
         if patch.get("category") not in spec["categories"]:
             raise SystemExit(f"{patch['id']}: category has to be one of {', '.join(spec['categories'])}")
         if patch.get("restart", False) not in (True, False):
             raise SystemExit(f"{patch['id']}: restart has to be yes or no")
+        for setting in patch.get("settings", []):
+            if not re.fullmatch(r"[A-Za-z0-9_]+/[A-Za-z0-9_]+", setting.get("key", "")) or not isinstance(setting.get("value"), str) \
+                    or not isinstance(setting.get("when_off", ""), str):
+                raise SystemExit(f"{patch['id']}: a setting needs a key, Section/name, and a value, and when_off if any, in quotes")
+    for category in spec.get("all_switch", []):
+        if category not in spec["categories"]:
+            raise SystemExit(f"all_switch: {category} isn't one of the categories")
+
+
+def compile_spec(spec):
+    """Each firmware's edits for spec's patches. Returns {(model, version): (edits by id, cached ids)},
+    each patch's targets, and the firmware with its hashes."""
+    check_spec(spec)
     folder = community_folder(spec["community_patches"]["ref"], spec["community_patches"]["version"])
     sources = {name: load_patches(folder, name) for name in FILES}
-    out = REPO / "web/patches"
     targets = {patch["id"]: {} for patch in spec["patches"]}
     firmware_list = []
+    compiled = {}
     for build in spec["firmware"]:
         model, version = build["model"], build["firmware"]
         print(f"{model} {version}")
@@ -372,6 +406,8 @@ def main():
         for patch in spec["patches"]:
             name = patch["file"]
             try:
+                if patch.get("only_on") and not build.get(patch["only_on"]):
+                    raise Misfit(f"not tried on this firmware yet: it needs {patch['only_on']}: true")
                 edits = compile_patch(binaries[name], steps_for(patch, version, sources))
                 if not edits:
                     raise Misfit("it doesn't change anything")
@@ -388,17 +424,30 @@ def main():
             if any(binaries[name].runs_once(at) for at, _, _ in edits):
                 cached.append(patch["id"])
             print(f"  ok {patch['id']}: {len(edits)} edits{' (keeps a value: may need a restart)' if patch['id'] in cached else ''}")
+        compiled[(model, version)] = (result, cached)
+    return compiled, targets, firmware_list
+
+
+def main():
+    spec = yaml.safe_load((REPO / "patches.yaml").read_text())
+    compiled, targets, firmware_list = compile_spec(spec)
+    out = REPO / "web/patches"
+    for (model, version), (result, cached) in compiled.items():
         (out / f"{model}-{version}.json").write_text(json.dumps(result, indent=1) + "\n")
         (out / f"{model}-{version}.cached.json").write_text(json.dumps(cached) + "\n")
     offered = []
     for patch in spec["patches"]:
         item = {"id": patch["id"], "kind": "patch", "category": patch["category"], "title": patch["title"], "description": patch["description"]}
         item.update({key: patch[key] for key in ("warning", "group") if key in patch})
+        item["settings"] = [[*setting["key"].split("/", 1), setting["value"]] for setting in patch.get("settings", [])]
+        item["offSettings"] = [[*setting["key"].split("/", 1), setting["when_off"]]
+                               for setting in patch.get("settings", []) if "when_off" in setting]
         offered.append({**item, "needsFirmware": True, "targets": targets[patch["id"]]})
     (out / "compiled.js").write_text(
         "// Written by tools/compile_patches.py from patches.yaml. Run `make patches` to change it.\n"
         f"export const FIRMWARE = {json.dumps(firmware_list, indent=2)};\n\n"
         f"export const PATCH_CATEGORIES = {json.dumps(spec['categories'], indent=2)};\n\n"
+        f"export const ALL_SWITCH = {json.dumps(spec.get('all_switch', []))};\n\n"
         f"export const COMPILED_PATCHES = {json.dumps(offered, indent=2)};\n"
     )
 
