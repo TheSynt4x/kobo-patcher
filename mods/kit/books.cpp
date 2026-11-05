@@ -236,12 +236,17 @@ static void hooked_serialized(QString *out, int id) {
     else real_serialized(out, id);
 }
 
+/* What Kobo reads back may hold more than the filter, as Kobo's own does, so ours is looked for
+ * inside it. */
 static int hooked_deserialized(const QString &saved) {
     QString ours = QStringLiteral("nkFilter(" NK_NAME ":");
-    if (!saved.startsWith(ours)) return real_deserialized(saved);
+    int at = saved.indexOf(ours);
+    if (at < 0) return real_deserialized(saved);
+    int start = at + ours.size(), end = saved.indexOf(QLatin1Char(')'), start);
+    QString name = saved.mid(start, end < 0 ? -1 : end - start);
     ask_for_entries();
     for (int i = 0; i < entries->size(); i++)
-        if (saved == saved_name(entries->at(i).name)) return first_id() + i;
+        if (name == entries->at(i).name) return first_id() + i;
     /* An entry that's gone: what Kobo reads back for a filter it doesn't know. */
     return real_deserialized(QString());
 }
