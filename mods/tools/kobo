@@ -84,7 +84,7 @@ def call(endpoint, method="GET", body=None, timeout=30, host=None, quiet=False, 
         die("no token: run tools/kobo setup with the Kobo plugged in")
     url = f"http://{host}:{c.get('port', PORT)}{endpoint}"
     if query:
-        url += "?" + urllib.parse.urlencode(query)
+        url += "?" + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)  # devtools reads %20, not +
     request = urllib.request.Request(url, data=body, method=method, headers={"X-Token": c["token"]})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as answer:
