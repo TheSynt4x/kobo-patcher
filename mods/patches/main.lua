@@ -333,7 +333,7 @@ if not state.started then
 end
 nk.settings{name = "Kobo Patcher", build = build}
 
--- Keyboards in your languages and a filter for them in My Books.
+-- Keyboards in your languages, a filter for them in My Books, and dictionaries by them.
 languages.start()
 
 -- KOReader's own launcher stops Nickel, and starts it again when KOReader quits.

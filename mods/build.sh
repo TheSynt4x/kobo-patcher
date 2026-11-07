@@ -84,7 +84,8 @@ if [ -f "$folder/main.lua" ]; then
   cxx "$kit/patch.cpp" "$out/patch.o"
   cxx "$kit/ui.cpp" "$out/ui.o"
   cxx "$kit/books.cpp" "$out/books.o"
-  objects="$objects $out/lua.o $out/tools.o $out/patch.o $out/ui.o $out/books.o"
+  cxx "$kit/dictionaries.cpp" "$out/dictionaries.o"
+  objects="$objects $out/lua.o $out/tools.o $out/patch.o $out/ui.o $out/books.o $out/dictionaries.o"
   libs=-lm
 fi
 link() {

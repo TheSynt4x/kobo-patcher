@@ -89,6 +89,13 @@ Each returns false if this firmware's keyboard isn't as expected. Calling one ag
 
 - `nk.books.filters(fn)`: entries for My Books' filter menu, after Kobo's own. `fn()` returns a list of `{name = , short_name = , languages = {...}}`. `name` shows in the menu, and `short_name` (by default the name) once it's chosen. An entry shows the books whose language is any of `languages`, as Kobo stores them, such as `"ru"` or `"ru-RU"`. `fn` is asked each time Kobo builds the menu or reads back the choice it saved, and has to answer straight away. The choice is saved by the entry's name, so one that has gone, or whose mod has, comes back as Kobo's default.
 - `nk.books.languages()`: the languages of the books on the Kobo, each once, as Kobo stores them from the books themselves, such as `"ru"`, `"ru-RU"` or `"rus"`. Not from `main.lua`: from a callback, or from `nk.books.filters`' function.
+- `nk.books.language(fn)`: the language Kobo takes a book to be in, which picks its dictionary. `fn(code)` gets what Kobo makes of the book's language: one of its own locales for a language it knows, such as `"de"` or `"en_US"`, and otherwise the interface language's, or, with the patch "Dictionaries for every book language", the book's own code, such as `"rus"`, `"swe"` or `"und"`. It returns a two-letter code, such as `"ru"`, or `""` for the interface language. `fn` is asked once per code and has to answer straight away.
+
+## Dictionaries
+
+- `nk.dictionaries.installed_first()`: a book gets a dictionary that's on the Kobo whenever there's one in its language, Kobo's own or one in `.kobo/custom-dict`, before one Kobo would have to download. Without it, Kobo can pick a dictionary from its catalogue that isn't downloaded, such as its English, over a custom one, and then looks nothing up. A dictionary chosen in a book sticks the same way.
+
+Each returns false if this firmware isn't as expected. Calling `nk.books.language` again replaces `fn`.
 
 ## Waiting and time
 

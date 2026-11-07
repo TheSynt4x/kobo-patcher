@@ -1,5 +1,6 @@
 -- Languages: Kobo's own keyboards in the languages you choose, switched with a key beside the space
--- bar, and an entry per language of your books in My Books' filter menu.
+-- bar, an entry per language of your books in My Books' filter menu, and each book's dictionary
+-- by its cleaned language.
 --
 -- Kobo's "Language and dictionaries" page becomes "Languages", with a KEYBOARDS section under
 -- Kobo's own two, whose Edit opens the list of keyboards to tick. Kobo's interface language and its
@@ -172,10 +173,21 @@ local function filters()
   return entries
 end
 
+-- ---- dictionaries ----
+
+-- A book in rus, ru-RU or swe looks words up in Russian or Swedish, and one with no language in the
+-- interface language, and a dictionary on the Kobo, Kobo's or custom, wins over one it would
+-- have to download.
+local function hook_dictionaries()
+  nk.books.language(languages.clean)
+  nk.dictionaries.installed_first()
+end
+
 function languages.start()
   hook_keyboard()
   hook_page()
   nk.books.filters(filters)
+  hook_dictionaries()
 end
 
 return languages
