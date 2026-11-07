@@ -13,7 +13,7 @@ local update = {}
 -- This mod's version. A mod is only offered when the manifest's is higher, so a newer build is
 -- never replaced by an older one, as one built from a branch would be by the site's. Raise it
 -- with each change to the mod that should reach Kobos: tools/sign_mods.mjs reads it from here.
-update.VERSION = 5
+update.VERSION = 6
 
 -- The public half of the key tools/sign_mods.mjs signs with.
 local UPDATE_KEY = "f65e1ff82241944b3e2a8ddb433be5a710835feaca53db3c5fc4afdd01d567b8"

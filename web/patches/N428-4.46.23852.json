@@ -219,154 +219,60 @@
    "replace": "9a9999999999f13f"
   }
  ],
- "no-recommendations": [
+ "no-kobo-store": [
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14273648,
-   "find": "58b1",
-   "replace": "00bf"
+   "at": 15546752,
+   "find": "a9f70ecb",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14242310,
-   "find": "e7f45ae6",
-   "replace": "00bf00bf"
+   "at": 15571286,
+   "find": "a3f724cb",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14242330,
-   "find": "e7f450e6",
-   "replace": "00bf00bf"
+   "at": 12517570,
+   "find": "8cf66ee7",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14242350,
-   "find": "e7f446e6",
-   "replace": "00bf00bf"
+   "at": 12522962,
+   "find": "8bf6e6e4",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14271574,
-   "find": "83b3",
-   "replace": "30e0"
-  }
- ],
- "home-tile-my-books": [
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14293670,
-   "find": "40f00d81",
-   "replace": "aff30080"
+   "at": 15791584,
+   "find": "6df7decc",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14293700,
-   "find": "d7f43ae5",
-   "replace": "00bf00bf"
+   "at": 16870956,
+   "find": "66f6b8c8",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14296136,
-   "find": "98b5044600affff482e704f15800bd46bde89840e3f4d6b4",
-   "replace": "10b508f09dfa32f1c3fd006910b118305cf144f810bd00bf"
-  }
- ],
- "no-kobo-plus": [
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9812062,
-   "find": "40f11482",
-   "replace": "aff30080"
+   "at": 14752408,
+   "find": "6bf482e2",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9812080,
-   "find": "26f54eec",
-   "replace": "00bf00bf"
+   "at": 14714438,
+   "find": "74f4ace4",
+   "replace": "012000bf"
   },
   {
    "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9812240,
-   "find": "26f5feeb",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9812306,
-   "find": "26f5deeb",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9812332,
-   "find": "26f5d0eb",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9813538,
-   "find": "26f576e9",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9813606,
-   "find": "26f554e9",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9796100,
-   "find": "2af584eb",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14326834,
-   "find": "50d0",
-   "replace": "00bf"
-  }
- ],
- "no-overdrive-links": [
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9813468,
-   "find": "26f598e9",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9796070,
-   "find": "2af594eb",
-   "replace": "00bf00bf"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9795946,
-   "find": "2af5d2eb",
-   "replace": "00bf00bf"
-  }
- ],
- "no-instapaper-links": [
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 17968832,
-   "find": "2de9f04f",
-   "replace": "00207047"
-  },
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 9813276,
-   "find": "26f5f8e9",
-   "replace": "00bf00bf"
-  }
- ],
- "no-kobo-plus-promo": [
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 14237636,
-   "find": "2de9f04f",
-   "replace": "00207047"
+   "at": 15304834,
+   "find": "e4f78ecb",
+   "replace": "012000bf"
   }
  ],
  "no-end-of-book-recommendations": [
@@ -375,14 +281,6 @@
    "at": 13233616,
    "find": "80f00101",
    "replace": "002100bf"
-  }
- ],
- "no-discover": [
-  {
-   "file": "./usr/local/Kobo/libnickel.so.1.0.0",
-   "at": 15546890,
-   "find": "0121",
-   "replace": "0021"
   }
  ],
  "no-more-extras": [
@@ -413,14 +311,6 @@
    "at": 30339229,
    "find": "789cad965f4bc33014c5dff7290abe2a2ce9ff0d1fc429080ac27c139138b32ed03535adba217e77db2d62badc26edead3e0acf7fcd67bcfbdec644d5876c9b3b2faa0e2f1ed22cf9f5fe9075bd09be241b09427dbf352bcd327e76be4386fb9e03915e5f62ca5cbf28e88846513c7c5f9663afa1e9d18bcee579c666c63f5f2c676af992009cfac567e68b79a975cacad4e4107a719d9a62c599556b3d0b39b993a2f6aca7fb5be6136b0f70daf61cd6f580dee7ec36d68fb4b9eff5ac5c1b4f155919305cb928983c64366a210106e45780326a512c2710b015b5fa27d7e2a20c66d0077d0541506c6ad2f11ec18827f22c3884f774f605b08d66473b6a2f50faa8ca3ddb25422cb0e4510d8983808d433a1025d2fd081520481eafc419e161015e745918e93228c6bcc0a06eae3549181ebe948298248257f20ef309f2accf781764a11845dbd57e122069afa80fe6e3e1017294adc82a71d125807be8e7e7d1b8cc5509a94e2c0580c44e3af169bc1e09495eac858adcf4c29f5f7a5fb0a565c575763be2029bdad1ea2b2c8b6ebfa62c51858ac181fc7322fb117011197627f96718183c80512b7178f409957378a421d26c5fe30d3de8621b0b752ec40ea75e31102928150d764f43aefc805eead14fbb38cc940b10fa0e2aecbd5efa8631f88a114fbc34cc9a8fe0400243cee9ac1fa161dfcc5f860057b49e9c45992b4a0b5cd0fa6e49c2a",
    "replace": "78daad965d4bc3301486eff72b0ade3a68d28fb5132fc40f101404bd1391386317e89a2eadba21fe775b17315dce4ed77657837739efd39ef39ed0a30513d9b9cccaea87abc7e5599e3fbff20f31e3d7c58312a94cd6a7a57ae74fced7c87196b9923957e57a9cf2b7f296a94464538784f9ea64f43d3a42bceee69267627510af0bc51299b55a51da6e755f4ab568778af77828b64e45322f0f6286755ed59443b5beb319d2fb86d7b0e637ad8676bfb31bd6fe52e67f567178d2f8abc8d94c6449d54877c84c0c02a13b11fe8049998489bb8340ddfef3330131dd05f0064dd56050baf325c25f86929f0419f1f1ef09da1682055b8de7bc7ea0ca3872eb1c55a2c8b64510d8983808b43361023d3fb4815a0481e6fc419e151013e747918dd3228c6bcc0a06dae33491a1e7db482d8248237f206f3b9f262c0880766a11845dbe57e16208cd3c60bf5b00c4458b1a3793e91e09ac035f47bfbe1bd062284d4671881603d1f8afa538189cb2511da1d5f6cc8cd26053baa910c555756bdccf58ca6faa435c17b5edbabd583105162ba6fd58f812fb910f6d95df8f852e70187940e236620f14beba5134b1615aec0ec3f6763201f6568b7b903addf18400c92084f663e1c9201e70df6ab13b0b4d0689030015073d5178326800c4508bdd615832aa8f008044dd7d3358df455b9f181fa2102f299f3a6f2c2d786df30338449c2000000000000000"
-  }
- ],
- "no-home-footer-covers": [
-  {
-   "file": "./usr/local/Kobo/nickel",
-   "at": 30339229,
-   "find": "789cad965f4bc33014c5dff7290abe2a2ce9ff0d1fc429080ac27c139138b32ed03535adba217e77db2d62badc26edead3e0acf7fcd67bcfbdec644d5876c9b3b2faa0e2f1ed22cf9f5fe9075bd09be241b09427dbf352bcd327e76be4386fb9e03915e5f62ca5cbf28e88846513c7c5f9663afa1e9d18bcee579c666c63f5f2c676af992009cfac567e68b79a975cacad4e4107a719d9a62c599556b3d0b39b993a2f6aca7fb5be6136b0f70daf61cd6f580dee7ec36d68fb4b9eff5ac5c1b4f155919305cb928983c64366a210106e45780326a512c2710b015b5fa27d7e2a20c66d0077d0541506c6ad2f11ec18827f22c3884f774f605b08d66473b6a2f50faa8ca3ddb25422cb0e4510d8983808d433a1025d2fd081520481eafc419e161015e745918e93228c6bcc0a06eae3549181ebe948298248257f20ef309f2accf781764a11845dbd57e122069afa80fe6e3e1017294adc82a71d125807be8e7e7d1b8cc5509a94e2c0580c44e3af169bc1e09495eac858adcf4c29f5f7a5fb0a565c575763be2029bdad1ea2b2c8b6ebfa62c51858ac181fc7322fb117011197627f96718183c80512b7178f409957378a421d26c5fe30d3de8621b0b752ec40ea75e31102928150d764f43aefc805eead14fbb38cc940b10fa0e2aecbd5efa8631f88a114fbc34cc9a8fe0400243cee9ac1fa161dfcc5f860057b49e9c45992b4a0b5cd0fa6e49c2a",
-   "replace": "78daad965d4bc3301486eff72b0ade2a34e9c75ac50bf103040541ef4424ced805baa64b3bdd10ffbbadcb305dce4ed77657837739efd39ef39ed0a31913d9a5cccaea87abe7f9459ebfbef34f31e1b7c59312a94c56e7a55af017e77be438f35cc99cab727592f28ff29ea94464a70e09f3e5d9e8677484783d4c25cfc4f2205e578a25326bb5a2b4ddeab1946ad6ee14eff1506c958a645a1ec40cebbcaa29876a7d6733a4f70daf61cd6f5a0ded7e6737acfda5cc37567178d6f8abc8d9446449d54877c84c0c02a13b11fe80499984b1bb8340ddfef3330131dd05f0064dd56050baf325c23f86925f0419f1f1df09da1682195b9e4c79fd409571e4d639aa44916d8b20b03171106867c2047a7e6803b50802cdf9833c2b2026ce8f221ba74518d798150cb4c7692243cfb7915a049146fe40de763e4d581000edd42208bb5e54e16208cd3c60bf5b00c4458b1a3791e91e09ac035f47bfbe1bd062284d4671881603d1f8afa538189cb2511da1d5f6cc8cd2605dbaae10c54d756b3c4e58caefaa435c17b5edbabd583105162ba6fd58f812fb910f6d95df8f852e70187940e2d6620f14beba5134b6615aec0ec3f6763c06f6568b7b903addf18400c92084f663e1c9201e70df6ab13b0b4d0689030015073d5178326800c4508bdd615832aa8f008044dd7d3358df455b9f189fa2106f293f753e585af0cdade5b59efa056153a8f5000000"
   }
  ],
  "library-covers": [

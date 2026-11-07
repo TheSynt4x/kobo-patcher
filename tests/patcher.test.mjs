@@ -268,7 +268,7 @@ for (const build of FIRMWARE) {
     for (const extra of items.filter((i) => i.group)) {
       planPatch(firmware, [...items.filter((i) => !i.group).map((i) => i.id), extra.id], { edits });
     }
-    const ids = items.filter((i) => !i.group || ["no-home-footer-covers", "block-updates"].includes(i.id)).map((i) => i.id);
+    const ids = items.filter((i) => !i.group || ["block-updates"].includes(i.id)).map((i) => i.id);
     const plan = planPatch(firmware, ids, { edits });
     assert.equal(plan.files.length, 2);
     for (const file of plan.files) {
@@ -295,17 +295,15 @@ test("removing an add-on needs no firmware and leaves the system files alone", (
 
 const DRIVE_CONF = "googledrive_link_account_start=https://authorize.kobo.com/{region}/{language}/linkcloudstorage/provider/google_drive";
 
-test("setConf adds the Drive settings where they belong", () => {
+test("setConf adds the Drive setting where it belongs", () => {
   const cases = [
-    ["[FeatureSettings]\nAcceptPreviewUpgrades=true\n\n[Other]\nx=1\n",
-      `[FeatureSettings]\nGoogleDrive=1\nAcceptPreviewUpgrades=true\n\n[Other]\nx=1\n\n[OneStoreServices]\n${DRIVE_CONF}\nkobo_googledrive_link_account_enabled=True\n`],
-    ["[FeatureSettings]\nGoogleDrive=0\n",
-      `[FeatureSettings]\nGoogleDrive=1\n\n[OneStoreServices]\n${DRIVE_CONF}\nkobo_googledrive_link_account_enabled=True\n`],
-    ["[Other]\nGoogleDrive=0\n",
-      `[Other]\nGoogleDrive=0\n\n[FeatureSettings]\nGoogleDrive=1\n\n[OneStoreServices]\n${DRIVE_CONF}\nkobo_googledrive_link_account_enabled=True\n`],
-    ["[A]\r\nx=1\r\n\r\n[FeatureSettings]\r\nz=2\r\n",
-      `[A]\r\nx=1\r\n\r\n[FeatureSettings]\r\nGoogleDrive=1\r\nz=2\r\n\r\n[OneStoreServices]\r\n${DRIVE_CONF}\r\nkobo_googledrive_link_account_enabled=True\r\n`],
-    ["", `\n\n[FeatureSettings]\nGoogleDrive=1\n\n[OneStoreServices]\n${DRIVE_CONF}\nkobo_googledrive_link_account_enabled=True\n`],
+    ["[OneStoreServices]\nAcceptPreviewUpgrades=true\n\n[Other]\nx=1\n",
+      `[OneStoreServices]\n${DRIVE_CONF}\nAcceptPreviewUpgrades=true\n\n[Other]\nx=1\n`],
+    ["[OneStoreServices]\ngoogledrive_link_account_start=\n", `[OneStoreServices]\n${DRIVE_CONF}\n`],
+    ["[Other]\ngoogledrive_link_account_start=\n",
+      `[Other]\ngoogledrive_link_account_start=\n\n[OneStoreServices]\n${DRIVE_CONF}\n`],
+    ["[A]\r\nx=1\r\n\r\n[OneStoreServices]\r\nz=2\r\n", `[A]\r\nx=1\r\n\r\n[OneStoreServices]\r\n${DRIVE_CONF}\r\nz=2\r\n`],
+    ["", `\n\n[OneStoreServices]\n${DRIVE_CONF}\n`],
   ];
   for (const [text, expected] of cases) {
     let ours = text;
@@ -320,13 +318,14 @@ test("a patch's settings are written whenever it's ticked, even when Kobo Patche
   const plan = planPatch(null, [], { on: ["dropbox"] });
   assert.deepEqual(plan.files, []);
   assert.deepEqual(plan.settings.map(([section, key]) => `${section}/${key}`),
-    ["FeatureSettings/Dropbox", "OneStoreServices/kobo_dropbox_link_account_enabled", "OneStoreServices/dropbox_link_account_poll"]);
+    ["OneStoreServices/dropbox_link_account_poll"]);
   assert.deepEqual(planPatch(null, [], { on: [] }).settings, []);
 });
 
 test("a patch turned off gets its when_off values, as in Kobo Patcher, and only those", () => {
-  assert.deepEqual(planPatch(null, [], { on: [], off: ["dropbox"] }).settings, [["FeatureSettings", "Dropbox", "0"]]);
-  assert.deepEqual(planPatch(null, [], { on: ["dropbox"], off: ["dropbox"] }).settings.length, 3);
+  // Dropbox's link address has no when_off, so turning it off leaves the address as it is.
+  assert.deepEqual(planPatch(null, [], { on: [], off: ["dropbox"] }).settings, []);
+  assert.deepEqual(planPatch(null, [], { on: ["dropbox"], off: ["dropbox"] }).settings.length, 1);
 });
 
 test("setConf keeps the line ending when it replaces a value in a CRLF file", () => {
@@ -350,15 +349,19 @@ test("the real firmware is recognised and its package is the known good one", { 
   assert.equal(SUPPORTED[await sha256(nickel)]?.firmware, "4.38.23852");
   const patched = patchedFile(planPatch({ libnickel: nickel }, ["google-drive"], { edits: realEdits() }));
   const packaged = await buildPackage([{ path: NICKEL, data: patched, mode: 0o775 }], MTIME);
-  assert.equal(await sha256(gunzipSync(packaged)), "452fcb7f8560242bb6203981e72d168d871846dd1e8b8f42b57451917098827e");
+  assert.equal(await sha256(gunzipSync(packaged)), "0e16e0df8e5781dcfdf90b8c78a1479362ca16507a79bd1c93e61458733510bb");
 });
 
-test("the Dropbox patch changes only its check on the real firmware, and works alongside Drive", { skip: !existsSync(REAL_FIRMWARE) }, async () => {
+test("the Dropbox patch changes only its checks and its address setter on the real firmware, and works alongside Drive", { skip: !existsSync(REAL_FIRMWARE) }, async () => {
   const nickel = await readNickel(await openAsBlob(REAL_FIRMWARE));
   const patched = patchedFile(planPatch({ libnickel: nickel }, ["dropbox"], { edits: realEdits() }));
   const changed = nickel.reduce((found, byte, at) => (byte === patched[at] ? found : [...found, at]), []);
-  assert.deepEqual(changed, [0x96de48, 0x96de4b, 0x96de4d]);
+  // InitializationCommand::onResponseParsed no longer sets the address, and supportsDropbox and
+  // getDropboxEnabled return true.
+  assert.deepEqual(changed, [0x831698, 0x831699, 0x83169a, 0x83169b, 0x96de48, 0x96de4b, 0x96de4d, 0xa12e98, 0xa12e99, 0xa12e9a, 0xa12e9b]);
+  assert.deepEqual([...patched.subarray(0x831698, 0x83169c)], [0x00, 0xbf, 0x00, 0xbf]);
   assert.deepEqual([...patched.subarray(0x96de48, 0x96de4e)], [0x00, 0xb5, 0x01, 0x20, 0x00, 0xbd]);
+  assert.deepEqual([...patched.subarray(0xa12e98, 0xa12e9c)], [0x01, 0x20, 0x70, 0x47]);
   const both = planPatch({ libnickel: nickel, nickel: new Uint8Array(1) }, ["google-drive", "dropbox"], { edits: realEdits() });
   const settings = both.settings.map(([, key]) => key);
   assert.ok(settings.includes("googledrive_link_account_start") && settings.includes("dropbox_link_account_poll"));

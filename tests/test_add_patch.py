@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import yaml
 
 from add_patch import to_entry
-from compile_patches import CACHE, Binary, Misfit, hexbytes, read_binaries
+from compile_patches import CACHE, Binary, Misfit, compile_patch, hexbytes, read_binaries
 
 REPO = Path(__file__).resolve().parent.parent
 NIA = CACHE / "firmware/kobo-update-4.38.23852.zip"
@@ -87,13 +87,46 @@ class RunsOnce(unittest.TestCase):
         self.assertTrue(self.runs_once("line-spacing"))
 
     def test_a_static_elsewhere_in_the_function_doesnt_count(self):
-        # smartLinkGeneralMessage sets up a static null Volume, after the edit.
-        self.assertTrue(self.nickel.calls(self.nickel.function_at(self.edits["no-kobo-plus"][0]["at"]), "__cxa_guard_acquire"))
-        self.assertFalse(self.runs_once("no-kobo-plus"))
+        # smartLinkGeneralMessage sets up a static null Volume, after its list of links is built.
+        start = self.nickel.symbol("ActivityManager::smartLinkGeneralMessage(Device const&)")
+        self.assertTrue(self.nickel.calls(self.nickel.function_at(start), "__cxa_guard_acquire"))
+        self.assertFalse(self.nickel.runs_once(start + 0x44))
 
     def test_code_that_runs_every_time(self):
-        self.assertFalse(self.runs_once("no-discover"))
+        self.assertFalse(self.runs_once("no-kobo-store"))
         self.assertFalse(self.runs_once("font-sizes"))
+
+
+@unittest.skipUnless(NIA.exists() or os.environ.get("REQUIRE_FIRMWARE"), "needs the Nia firmware from make patches")
+class ReplaceCall(unittest.TestCase):
+    """ReplaceCall on the Nia's libnickel, where the calls were found by reading its code."""
+
+    SIDELOADED = "ApplicationSettings::sideloadedMode()"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.nickel = Binary(read_binaries(NIA)["libnickel.so.1.0.0"])
+
+    def compile(self, function, **spec):
+        return compile_patch(self.nickel, [{"BaseAddress": function}, {"ReplaceCall": {"Call": self.SIDELOADED, **spec}}])
+
+    def test_finds_the_one_call_in_the_function(self):
+        (at, find, replace), = self.compile("MainWindowController::createHomePage(bool)", ReplaceH="0120 00BF")
+        self.assertEqual(at, self.nickel.symbol("MainWindowController::createHomePage(bool)") + 0x46)
+        self.assertEqual(find, bytes.fromhex("b7f7e0c8"))
+        self.assertEqual(replace, bytes.fromhex("012000bf"))
+
+    def test_nops(self):
+        (_, _, replace), = self.compile("MyWordsController::navSection() const", ReplaceInstNOP=True)
+        self.assertEqual(replace, bytes.fromhex("00bf00bf"))
+
+    def test_refuses_a_function_with_two_calls(self):
+        with self.assertRaises(Misfit):
+            self.compile("LibrarySubFilters::bookFilters()", ReplaceH="0120 00BF")
+
+    def test_refuses_a_function_without_one(self):
+        with self.assertRaises(Misfit):
+            self.compile("Device::supportsGoogleDrive() const", ReplaceH="0120 00BF")
 
 
 unittest.main()

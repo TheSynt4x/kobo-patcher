@@ -115,10 +115,13 @@ class Binary:
         return None
 
     def calls(self, function, name):
-        """Where a function, as (offset, size), calls the imported function with this name."""
+        """Where a function, as (offset, size), calls the function with this name, through its PLT
+        stub or straight to it."""
         start, size = function
+        direct = self.symbols.get(name)
         return [at for at in range(start, start + size - 2, 2)
-                if (target := blx_target(self, at)) is not None and self.plt_name(target & ~1) == name]
+                if (target := blx_target(self, at)) is not None
+                and ((target & ~1) == (direct or 0) & ~1 or self.plt_name(target & ~1) == name)]
 
     def runs_once(self, at):
         """Whether this offset is in code that sets up a function-local static: after a call to
@@ -220,6 +223,23 @@ def patch_bytes(binary, base, spec, edits):
     edits.append((at, find, replace))
 
 
+def patch_call(binary, base, spec, edits):
+    """ReplaceCall: the one call to the function named in Call, in the function at the base address,
+    replaced with ReplaceH or nops. It finds the call itself, so it needs no offset."""
+    function = binary.function_at(base)
+    if not function:
+        raise Misfit(f"no function at {base:#x}")
+    found = binary.calls(function, spec["Call"])
+    if len(found) != 1:
+        raise Misfit(f"{len(found)} calls to {spec['Call']} there, not one")
+    at = found[0]
+    find = binary.data[at:at + 4]
+    replace = NOP * 2 if spec.get("ReplaceInstNOP") else replacement(binary, at, spec["ReplaceH"])
+    if len(replace) != len(find):
+        raise Misfit("replacement isn't the same length")
+    edits.append((at, find, replace))
+
+
 def patch_value(binary, base, spec, pack, edits):
     at = base + spec.get("Offset", 0)
     find, replace = pack(spec["Find"]), pack(spec["Replace"])
@@ -289,6 +309,8 @@ def compile_patch(binary, steps):
             base = binary.find_once(spec.encode())
         elif kind == "ReplaceBytes":
             patch_bytes(binary, base, spec, edits)
+        elif kind == "ReplaceCall":
+            patch_call(binary, base, spec, edits)
         elif kind == "ReplaceInt":
             patch_value(binary, base, spec, lambda v: struct.pack("<B", v), edits)
         elif kind == "ReplaceFloat":
