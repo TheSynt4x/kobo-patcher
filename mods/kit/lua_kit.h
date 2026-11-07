@@ -65,6 +65,8 @@ QByteArray kit_ask(int fn, void (*push)(lua_State *co, void *arg), void *arg);
 void kit_ask_table(int fn, void (*use)(lua_State *co, int index, void *arg), void *arg);
 /* books.cpp: adds nk.books to the nk table on top of the stack. */
 void kit_open_books(lua_State *L);
+/* dictionaries.cpp: adds nk.dictionaries the same way. */
+void kit_open_dictionaries(lua_State *L);
 /* One of the mod's own files, built into the .so: a script, or icons/<name>.png. */
 bool kit_embedded(const char *name, const unsigned char **data, unsigned *size);
 /* Opens a settings-style screen built by the function at build_index, kept until it has gone. */

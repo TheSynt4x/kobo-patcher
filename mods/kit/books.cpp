@@ -1,5 +1,5 @@
-/* nk.books: what's in My Books. The languages of the books on the Kobo, and entries a mod adds to
- * My Books' filter menu.
+/* nk.books: what's in My Books. The languages of the books on the Kobo, entries a mod adds to
+ * My Books' filter menu, and the language Kobo takes a book to be in.
  *
  * - Kobo's filter menu lists LibrarySubFilters::bookFilters(), makes each entry's filter with
  *   createFilter(), names it with displayString() and shortDisplayString(), and saves the one
@@ -13,9 +13,13 @@
  *   the saved choice, never while the mod loads: reading the books opens Qt's SQL driver, a plugin.
  * - A choice is saved by its entry's name, so one whose entry or mod has gone is read back as
  *   Kobo's default.
+ * - A book's language is SupportedLocales::languageForVolume(), which picks its dictionary among
+ *   other things. The kit answers it from what localeForVolume() makes of the book's language,
+ *   cleaned by the mod's function once per code.
  *
  * As in lua.cpp, nothing raises a Lua error while a Qt value made here is still alive. */
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QHash>
 #include <QList>
 #include <QLocale>
@@ -23,6 +27,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QString>
+#include <QThread>
 #include <QVariant>
 #include <dlfcn.h>
 #include <new>
@@ -284,6 +289,52 @@ static bool hook_filters() {
     return true;
 }
 
+/* ---- a book's language ---- */
+
+typedef void (*LocaleFn)(QString *out, const void *volume);
+static LocaleFn locale_for_volume;
+static int language_fn = LUA_NOREF;
+/* The mod's answer for each code Kobo has given it, so Lua runs once per code. */
+static QHash<QString, QString> *cleaned;
+
+static void push_code(lua_State *co, void *arg) {
+    QByteArray code = static_cast<const QString *>(arg)->toUtf8();
+    lua_pushlstring(co, code.constData(), code.size());
+}
+
+/* Lua is only asked on Nickel's own thread; anywhere else a code it hasn't answered yet gets
+ * Kobo's two letters, as it would without the mod. An empty answer is the interface language. */
+static void hooked_language_for_volume(QString *out, const void *volume) {
+    QString kobo;
+    locale_for_volume(&kobo, volume);
+    QString answer;
+    QHash<QString, QString>::const_iterator found = cleaned->constFind(kobo);
+    if (found != cleaned->constEnd()) answer = found.value();
+    else if (language_fn != LUA_NOREF && QCoreApplication::instance() && QThread::currentThread() == QCoreApplication::instance()->thread()) {
+        answer = QString::fromUtf8(kit_ask(language_fn, push_code, &kobo));
+        cleaned->insert(kobo, answer);
+    } else answer = kobo.left(2);
+    if (answer.isEmpty()) answer = QLocale().name().left(2);
+    new (out) QString(answer);
+}
+
+static bool hook_language() {
+    if (locale_for_volume) return true;
+    static const char *const language = "_ZN16SupportedLocales17languageForVolumeERK6Volume";
+    void *locale = dlsym(RTLD_DEFAULT, "_ZN16SupportedLocales15localeForVolumeERK6Volume");
+    if (!locale || !dlsym(RTLD_DEFAULT, language)) {
+        nk_log("there's no SupportedLocales::languageForVolume on this firmware, so nk.books.language does nothing");
+        return false;
+    }
+    cleaned = new QHash<QString, QString>;
+    locale_for_volume = reinterpret_cast<LocaleFn>(locale);
+    if (!nk_hook(language, reinterpret_cast<void *>(hooked_language_for_volume))) {
+        locale_for_volume = 0;
+        return false;
+    }
+    return true;
+}
+
 /* ---- Lua ---- */
 
 /* nk.books.filters(fn): entries for My Books' filter menu, after Kobo's. fn() returns a list of
@@ -331,8 +382,29 @@ static int l_languages(lua_State *co) {
     return 1;
 }
 
+/* nk.books.language(fn): the language Kobo takes a book to be in, which picks its dictionary.
+ * fn(code) gets what Kobo makes of the book's language: one of its own locales for a language it
+ * knows, such as "de" or "en_US", and otherwise the interface language's, or with the patch
+ * "Dictionaries for every book language", the book's own code, such as "rus", "swe" or "und". It
+ * returns a two-letter code, such as "ru", or "" for the interface language. fn is asked once per
+ * code, and has to answer straight away. Returns false if this firmware has no such function.
+ * Call it from main.lua; calling it again replaces fn. */
+static int l_language(lua_State *co) {
+    luaL_checktype(co, 1, LUA_TFUNCTION);
+    if (!hook_language()) {
+        lua_pushboolean(co, 0);
+        return 1;
+    }
+    if (language_fn != LUA_NOREF) luaL_unref(co, LUA_REGISTRYINDEX, language_fn);
+    cleaned->clear();
+    lua_pushvalue(co, 1);
+    language_fn = luaL_ref(co, LUA_REGISTRYINDEX);
+    lua_pushboolean(co, 1);
+    return 1;
+}
+
 void kit_open_books(lua_State *L) {
-    static const luaL_Reg books[] = {{"filters", l_filters}, {"languages", l_languages}, {0, 0}};
+    static const luaL_Reg books[] = {{"filters", l_filters}, {"languages", l_languages}, {"language", l_language}, {0, 0}};
     luaL_newlib(L, books);
     lua_setfield(L, -2, "books");
 }

@@ -1081,6 +1081,7 @@ extern "C" void nk_mod_init(void) {
     kit_open_tools(L);
     kit_open_ui(L);
     kit_open_books(L);
+    kit_open_dictionaries(L);
     lua_pushstring(L, NK_NAME);
     lua_setfield(L, -2, "name");
     lua_setglobal(L, "nk");
