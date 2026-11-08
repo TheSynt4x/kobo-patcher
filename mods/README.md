@@ -44,6 +44,17 @@ The page checks a pack whole before offering it, and only uses what's for the Ko
 
 `devtools/` is a mod for developing on a real Kobo, driven from the computer over Wi-Fi with `tools/kobo`: tap and swipe, what's on screen with its text and places, screenshots, every mod's log and Nickel's crashes, files and a shell, pushing a Lua mod's changed scripts without a rebuild, and running whole scenarios of steps. Anyone with its token is root on the Kobo, so it's only for your own Kobo on your own Wi-Fi. See [devtools/README.md](devtools/README.md).
 
+### Dev builds and releases
+
+Only the site's deploy builds a release, with `KOBO_RELEASE=1`, from committed code. Every other build is a dev build, and says so: `build.sh` puts `dev`, the commit, `+` for changes not committed, and the time in the `.so`, and the kit shows DEV BUILD at the end of each of that mod's rows on the More page. Kobo Patcher shows it under THIS KOBO too, and Check offers a dev build the site's release of the same version, as the way back. A release is the same bytes each time it's built, and the deploy refuses a `libpatches.so` that changed under a version the site already has, so a version is always one build.
+
+From a change to a release:
+
+1. In the emulator: Nickel starts, every mod's guard clears, and the change shows and works.
+2. On your own Kobo, with `tools/kobo install` or `push`: its More page says DEV BUILD.
+3. Raise `update.VERSION` if Kobo Patcher changed, and merge. The deploy builds, signs and publishes it.
+4. Check on each Kobo, or `tools/kobo reset` on one with devtools. `tools/kobo status` then says `release N, the site's`.
+
 ## The Patches mod
 
 It's all Lua, in `patches/`. It adds "Kobo Patcher" to the More page, below Kobo's own rows, and switches patches on and off in Nickel's memory, straight away, and never changes the firmware's files. Each patch's edits are found in libnickel or the nickel program as Nickel has loaded them, and every edit's bytes are checked before any are written. Bytes that match neither side of a patch show as "Changed" and are left alone. A patch with some edits on and some off, as an older version of it leaves the files, shows as off, and switching it finishes or undoes it.
@@ -52,7 +63,7 @@ The patch list is a file, `/mnt/onboard/.adds/patches/lists/<model>-<firmware>.t
 
 Its screen is short: this Kobo, with "New patches and Kobo Patcher", how many patches are on, with Edit opening the page of them all by category, and the rest the mod adds, which is switched there and not on Kobo's own screens: the keyboards to switch between with a key beside the space bar, and an entry for each language of your books in My Books' filter menu. Kobo's "Language and dictionaries" page is left as Kobo has it.
 
-"New patches and Kobo Patcher" checks for updates over Wi-Fi, through Qt's own network code. It downloads `mods/manifest.txt` from the site, which `tools/sign_mods.mjs` signs with an Ed25519 key, and refuses it unless the signature matches `UPDATE_KEY` in `patches/update.lua` ([Monocypher](https://monocypher.org) checks it, through `nk.crypto.ed25519_verify`). Every other file has to match the SHA-512 and size the manifest gives it. A new patch list is saved straight away. A new mod is only offered on the firmware the manifest names, the ones marked `mod: true` in `patches.yaml`, and only when its version in the manifest is higher than the mod's own `update.VERSION`, so a newer build is never replaced by an older one. Raise `update.VERSION` with each change to the mod that should reach Kobos. It installs with a restart. Because of the signature, plain HTTP is tried if TLS doesn't work.
+"New patches and Kobo Patcher" checks for updates over Wi-Fi, through Qt's own network code. It downloads `mods/manifest.txt` from the site, which `tools/sign_mods.mjs` signs with an Ed25519 key, and refuses it unless the signature matches `UPDATE_KEY` in `patches/update.lua` ([Monocypher](https://monocypher.org) checks it, through `nk.crypto.ed25519_verify`). Every other file has to match the SHA-512 and size the manifest gives it. A new patch list is saved straight away. A new mod is only offered on the firmware the manifest names, the ones marked `mod: true` in `patches.yaml`, and only when its version in the manifest is higher than the mod's own `update.VERSION`, so a newer build is never replaced by an older one. A dev build is offered the release of its own version too (see "Dev builds and releases"). Raise `update.VERSION` with each change to the mod that should reach Kobos. It installs with a restart. Because of the signature, plain HTTP is tried if TLS doesn't work.
 
 To test without a cable, run `make mods` and `make serve LAN=1`, and put the address it prints in `.adds/patches/update-url` on the Kobo. Check then updates from your computer. Only builds signed with the key are taken, so this needs the key in `~/.config/kobo-patcher/signing-key.pem`.
 
