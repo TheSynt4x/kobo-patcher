@@ -393,6 +393,8 @@ def check_spec(spec):
             raise SystemExit(f"{patch['id']}: category has to be one of {', '.join(spec['categories'])}")
         if patch.get("restart", False) not in (True, False):
             raise SystemExit(f"{patch['id']}: restart has to be yes or no")
+        if patch.get("rebuild") not in (None, "main-window"):
+            raise SystemExit(f"{patch['id']}: rebuild has to be main-window")
         for setting in patch.get("settings", []):
             if not re.fullmatch(r"[A-Za-z0-9_]+/[A-Za-z0-9_]+", setting.get("key", "")) or not isinstance(setting.get("value"), str) \
                     or not isinstance(setting.get("when_off", ""), str):

@@ -61,8 +61,9 @@ Most patches change code Nickel runs again whenever it's needed. For the rest, t
 - The bottom bar, the More page and the home screen are asked to update.
 - A changed stylesheet is set again on the widgets showing the old one, found by its text, because Kobo's `setStyleSheetFile` doesn't keep the file's name. Widgets the old one hid with `qproperty-visible: false` are shown again.
 - Some values are worked out once and kept, like the line spacing list. Clearing one of those needs addresses from one firmware's libnickel, listed in `known`, and checked against the running libnickel first. On a firmware that isn't listed, the Kobo asks for a restart instead.
+- A patch with `rebuild: main-window` in `patches.yaml` has Kobo build its main window again, the bottom bar and then Home or My Books, with `nk.main_window.rebuild()`, as Kobo does after a USB connection. Any screen that was open closes, Kobo Patcher's too.
 
-A new patch whose code Nickel only runs once may need a nudge or a `known` entry, or it will only take effect after a restart.
+A patch should take effect straight away, with no restart. One whose code Nickel only runs once needs a nudge, a `known` entry, or a place where Kobo runs that code again by itself, such as `rebuild: main-window`. A restart is the last resort, for a change nothing Kobo does will show.
 
 ## KOReader
 

@@ -1383,6 +1383,32 @@ static int l_toast(lua_State *co) {
     return 0;
 }
 
+typedef void (*CreateHomePage)(MainWindowController *window, bool first);
+
+/* nk.main_window.rebuild(): Kobo's main window built again, as Kobo does itself after a USB
+ * connection or a change of language: the bottom bar, then Home or My Books, with every screen that
+ * was open closed. For a change to code Kobo runs as it builds them, such as a patch's, to show
+ * without a restart. It happens straight after the callback it's called from, so that callback's
+ * own screen can close. Returns false if this firmware's main window isn't as expected. */
+static int l_main_window_rebuild(lua_State *co) {
+    CreateHomePage create = reinterpret_cast<CreateHomePage>(kit_got("_ZN20MainWindowController14createHomePageEb"));
+    if (!create) {
+        lua_pushboolean(co, 0);
+        return 1;
+    }
+    QTimer *soon = new QTimer();
+    soon->setSingleShot(true);
+    QObject::connect(soon, &QTimer::timeout, [soon, create]() {
+        soon->deleteLater();
+        /* Short, so a restart soon after isn't taken for a crash of the rebuild. */
+        nk_failsafe(10);
+        create(MainWindowController::sharedInstance(), false);
+    });
+    soon->start(0);
+    lua_pushboolean(co, 1);
+    return 1;
+}
+
 void kit_open_ui(lua_State *L) {
     static const luaL_Reg page_methods[] = {{"heading", page_heading}, {"books", page_books}, {"book", page_book},
                                            {"cover", page_cover}, {"search", page_search}, {"field", page_field},
@@ -1404,4 +1430,7 @@ void kit_open_ui(lua_State *L) {
     static const luaL_Reg keyboard[] = {{"choose", l_keyboard_choose}, {"reload", l_keyboard_reload}, {"key", l_keyboard_key}, {0, 0}};
     luaL_newlib(L, keyboard);
     lua_setfield(L, -2, "keyboard");
+    static const luaL_Reg main_window[] = {{"rebuild", l_main_window_rebuild}, {0, 0}};
+    luaL_newlib(L, main_window);
+    lua_setfield(L, -2, "main_window");
 }
