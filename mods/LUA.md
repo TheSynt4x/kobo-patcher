@@ -10,6 +10,7 @@ A mod is a folder:
 - Any other `.lua` files, loaded with `require "name"`.
 - `icons/`, PNG files for rows and tabs, built into the mod.
 - `plugin`, the Qt plugin class and key the mod loads as (15 and 4 characters), so it loads beside other mods.
+- `version`, for a mod that updates itself: its version, a whole number from 1, which `nk.updates` offers higher ones by.
 
 `build.sh <folder>` builds it into one `lib<folder>.so`, scripts and icons included, which goes in `/usr/local/Kobo/imageformats/` on the Kobo. Each mod keeps its own files in `/mnt/onboard/.adds/<mod>/`.
 
@@ -142,9 +143,31 @@ Each returns false if this firmware isn't as expected. Calling `nk.books.languag
 - `nk.error(title, text)`: Kobo's error dialog.
 - `nk.toast(title, text, ms)`: Kobo's message that comes and goes by itself.
 
+## A mod's own updates
+
+A mod can update itself over Wi-Fi, from wherever its author puts it, the way Kobo Patcher does: on its own page, Check finds a newer version, asks, installs it and restarts the Kobo. It only checks when Check is tapped.
+
+- `nk.updates{url = , key = , name = }`: where this mod's updates come from. `url` is the folder holding them, `https://` or `http://`, and `key` the public half of the key that signs them, 64 hex digits. `name` is what the Kobo calls the mod, by default `nk.name`. Call it from `main.lua`: it only records them. The mod needs a `version` file.
+- `nk.updates.add_to(page)`: a row on the mod's page with its version, and ", dev build" for one built on a computer, and Check. While a check runs, how it's going shows in the row's place. Returns the row's title.
+- `nk.updates.check(say)`: the same check, for a mod that shows it its own way. `say(text)` is told how it's going. From a callback.
+- `nk.version`: the mod's version, from its `version` file, or nil without one.
+
+To publish an update, raise the number in `version`, build the mod, and sign it with `tools/sign_mod.mjs`:
+
+```sh
+node tools/sign_mod.mjs --new-key ~/.config/my-mod/signing-key.pem    # once: prints the key for nk.updates
+node tools/sign_mod.mjs path/to/mymod out --key ~/.config/my-mod/signing-key.pem
+```
+
+It writes `manifest.txt`, its signature `manifest.sig`, and `lib<mod>.so` into `out`, to put at `url`. The manifest gives the build's SHA-512 and size, its version, and the Kobos it's for, `--targets`, by default the firmware the kit has been tried on. A Kobo only takes a manifest signed with the mod's key and a build that matches it, which is why plain HTTP is tried when TLS doesn't work. It's only offered a version higher than its own, or, on a dev build, the release of its own version, as the way back to what's published. Keep the key's private half secret: anyone with it can sign an update every Kobo with the mod would take.
+
+To test, put another address, such as `http://192.168.1.10:8000/`, in `.adds/<mod>/update-url` on the Kobo. What's there still has to be signed with the mod's key.
+
+Kobo Patcher still checks with its own `patches/update.lua`, which reads the same `mod` line from the site's manifest.
+
 ## Updating a mod and patching
 
-These are for Kobo Patcher, and anyone building something like it.
+These are for Kobo Patcher, and anyone building something like it. `nk.updates` uses the first two.
 
 - `nk.crypto.ed25519_verify(signature, key, message)`: whether `message` carries `signature` from `key`, both in hex.
 - `nk.self_sha512()` and `nk.replace_self(data, sha512)`: the hash of the mod as installed, and installing a new build of it for when Nickel next starts, only if it has that hash.
