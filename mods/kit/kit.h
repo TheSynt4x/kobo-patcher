@@ -37,8 +37,9 @@ void *kit_got(const char *symbol);
 QLabel *kit_append_section(QWidget *into, const char *title);
 QLabel *kit_append_button_row(QWidget *into, const char *title, const char *button, NkFn tapped, void *arg);
 /* A row beside one of Kobo's own on More or in Settings, by that row's object name, after it or
- * before it; with no name, in the usual place. Titles are copied. */
-void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, NkFn open, void *arg);
+ * before it; with no name, in the usual place, which on More is with the mods' rows, first of them
+ * if first is set. Titles are copied. */
+void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, bool first, NkFn open, void *arg);
 void kit_settings_row(const char *title, const char *beside, bool after, NkFn open, void *arg);
 /* Forgets every row added, for main.lua to add them again when it runs again. */
 void kit_forget_rows(void);

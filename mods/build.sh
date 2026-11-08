@@ -6,7 +6,8 @@
 # A mod is a folder of .c and .cpp files, and vendor/*.c, or of Lua: a main.lua, other *.lua and
 # icons/*.png, which are built into the .so, with Lua, Monocypher and the kit's Lua side. Its gen_*.py run
 # first, from the folder above it, and write into build/. A plugin file names its Qt plugin class and key, 15 and 4
-# characters, so Qt loads it beside the other mods; without one it gets the kit's.
+# characters, so Qt loads it beside the other mods; without one it gets the kit's. A C++ mod's icons/<name>.png
+# are built in too, as icon_<name>[] and icon_<name>_size in <icons.inc>, for nk_more_row.
 #
 # The kit and a mod's .cpp files are built against Qt 5.2.1's headers (kit/qt-headers.sh fetches
 # them, and kit/vendor.sh fetches Lua and Monocypher), with no C++ library of their own: they use
@@ -48,6 +49,16 @@ cxx() {
 }
 objects=
 libs=
+if [ ! -f "$folder/main.lua" ]; then
+  : > "$out/icons.inc"
+  for file in "$folder"/icons/*.png; do
+    [ -f "$file" ] || continue
+    icon="icon_$(basename "$file" .png | tr -c 'A-Za-z0-9\n' _)"
+    printf 'static const unsigned char %s[] = {' "$icon" >> "$out/icons.inc"
+    od -An -v -tu1 "$file" | tr -s ' \n' ',' | sed 's/^,//; s/,$//' >> "$out/icons.inc"
+    printf '};\nstatic const unsigned %s_size = %s;\n' "$icon" "$(wc -c < "$file")" >> "$out/icons.inc"
+  done
+fi
 for source in "$folder"/*.c "$folder"/vendor/*.c; do
   [ -f "$source" ] || continue
   object="$out/$(basename "$source" .c).o"

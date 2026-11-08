@@ -3,7 +3,7 @@
  * the log of every mod, files, shell commands, and reloading a Lua mod's scripts.
  *
  * It listens on port 8484 only if .adds/devtools/token exists, and answers only requests carrying
- * that token in X-Token. "Developer tools" in Kobo's Settings switches it off and on again, with a
+ * that token in X-Token. "Developer tools" on Kobo's More page switches it off and on again, with a
  * warning before it's on; off, it leaves .adds/devtools/off, and doesn't listen until it's on
  * again. Everything runs on Nickel's main thread, from Qt's event loop, except the thread that
  * copies stderr into the log. Kept to plain Qt and nk.h, without the Lua kit, so a
@@ -50,6 +50,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "nk.h"
+#include <icons.inc> /* build.sh: icons/more.png, for the row on More */
 
 #define FOLDER "/mnt/onboard/.adds/devtools"
 #define PORT 8484
@@ -617,7 +618,7 @@ static void build_screen(NkScreen *screen, void *) {
     toggle = nk_toggle_row(screen, "Developer tools", is_on(), switched, 0);
 }
 
-static void open_screen(void *) { nk_open_screen("Developer tools", "Settings", build_screen, 0); }
+static void open_screen(void *) { nk_open_screen("Developer tools", "More", build_screen, 0); }
 
 void nk_mod_init(void) {
     if (access(FOLDER "/token", F_OK)) {
@@ -626,9 +627,9 @@ void nk_mod_init(void) {
     }
     capture_stderr();
     catch_crashes();
-    nk_settings_row("Developer tools", open_screen, 0);
+    nk_more_row("Developer tools", icon_more, icon_more_size, open_screen, 0);
     if (!is_on()) {
-        nk_log("switched off in Settings, not listening");
+        nk_log("switched off on More, not listening");
         return;
     }
     /* Once Qt's event loop runs, so the server lives on Nickel's main thread. */

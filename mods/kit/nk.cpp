@@ -346,7 +346,7 @@ int nk_on_screen(const char *cls, NkBuiltFn fn, void *arg) {
  * in when the screen is built, so changed rows show the next time it opens. */
 struct AddedRow {
     QByteArray title, beside;
-    bool after;
+    bool after, first;
     const unsigned char *icon;
     unsigned icon_size;
     NkFn open;
@@ -370,7 +370,9 @@ static int more_index(void *layout, const char *name) {
     return -1;
 }
 
-/* More: Kobo's rows are IconLeftButtons in a GenericContainerWidget's layout. */
+/* More: Kobo's rows are IconLeftButtons in a GenericContainerWidget's layout. A row that names none
+ * of Kobo's goes after Help, the last of them, so the mods' rows are together below Kobo's own. A
+ * row that asks to be first goes straight after Help. */
 static void more_built(void *view, void *) {
     if (!more_rows || more_rows->isEmpty()) return;
     QObject *container = find_class(static_cast<QObject *>(view), "GenericContainerWidget");
@@ -381,13 +383,18 @@ static void more_built(void *view, void *) {
     }
     QWidget *box = static_cast<QWidget *>(container);
     QList<AddedRow> rows = *more_rows;
+    int firsts = 0;
     for (int i = 0; i < rows.size(); i++) {
-        QByteArray beside = rows[i].beside.isEmpty() ? QByteArray("settingsButton") : rows[i].beside;
+        bool last = rows[i].beside.isEmpty();
+        QByteArray beside = last ? QByteArray("helpButton") : rows[i].beside;
         int at = more_index(layout, beside.constData());
         if (at < 0) {
             nk_log("no %s on More for the row %s, so it goes above Settings", beside.constData(), rows[i].title.constData());
             at = more_index(layout, "settingsButton");
-        } else if (rows[i].after) {
+        } else if (last && rows[i].first) {
+            /* Straight after Help, after this mod's own first rows, so they keep their order. */
+            at += 1 + firsts++;
+        } else if (last || rows[i].after) {
             /* After any of ours already there, so rows keep their order. */
             for (at++; at < layout->count(); at++) {
                 QWidget *next = layout->itemAt(at)->widget();
@@ -408,17 +415,17 @@ static void more_built(void *view, void *) {
     nk_log("%d More rows added", rows.size());
 }
 
-void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, NkFn open, void *arg) {
+void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, bool first, NkFn open, void *arg) {
     if (!more_rows) {
         more_rows = new QList<AddedRow>;
         nk_on_screen("MoreView", more_built, 0);
     }
-    AddedRow row = {title, beside ? beside : "", after, icon_png, icon_size, open, arg};
+    AddedRow row = {title, beside ? beside : "", after, first, icon_png, icon_size, open, arg};
     *more_rows << row;
 }
 
 void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg) {
-    kit_more_row(title, icon_png, icon_size, 0, false, open, arg);
+    kit_more_row(title, icon_png, icon_size, 0, false, false, open, arg);
 }
 
 /* Every symbol the mod uses, listed by build.sh: what it leaves undefined, and the names this file
@@ -510,7 +517,7 @@ void kit_settings_row(const char *title, const char *beside, bool after, NkFn op
         settings_rows = new QList<AddedRow>;
         nk_on_screen("N3SettingsView", settings_built, 0);
     }
-    AddedRow row = {title, beside ? beside : "", after, 0, 0, open, arg};
+    AddedRow row = {title, beside ? beside : "", after, false, 0, 0, open, arg};
     *settings_rows << row;
 }
 

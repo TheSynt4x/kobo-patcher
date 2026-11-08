@@ -303,7 +303,7 @@ function showPatches() {
   const rows = [element("p", {
     id: "via-kobopatcher", className: "status", hidden: true,
     textContent: "Kobo Patcher switches the patches it has on the Kobo itself, so they don't need the firmware file. "
-      + "You can change them there too, under Settings.",
+      + "You can change them there too, under More > Kobo Patcher.",
   })];
   const mine = (id) => !!modInstalled("patches") && !!state.list?.ids.has(id);
   for (const category of CATEGORIES) {
@@ -506,7 +506,7 @@ async function run(makePlan) {
       const after = plan.files.length
         ? "It installs and restarts by itself. If it doesn't, power it off and on."
         : plan.storage.length
-          ? "Then open Settings > Kobo Patcher on it, and the patches switch straight away."
+          ? "Then open More > Kobo Patcher on it, and the patches switch straight away."
           : "Then restart it.";
       say("run-status", `Done. Eject the Kobo properly before unplugging it. ${after} `
         + "The backup can contain sign-in tokens, so keep it private.", "good");

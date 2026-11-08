@@ -42,7 +42,7 @@ mods/tools/kobo undev patches        # back to the built-in scripts
 
 ## Switching it off
 
-"Developer tools" in Kobo's Settings has a switch. Off, it stops listening straight away and leaves `.adds/devtools/off`, so it stays off after a restart. On again, it first shows Kobo's dialog with a warning: anyone on the Wi-Fi who has the token can control the Kobo, its files and its shell. A Kobo set up with `mods/tools/kobo setup` starts with it on. Tried in an emulator on 5 November: off, on with the warning, and off across a restart.
+"Developer tools" on Kobo's More page has a switch. Off, it stops listening straight away and leaves `.adds/devtools/off`, so it stays off after a restart. On again, it first shows Kobo's dialog with a warning: anyone on the Wi-Fi who has the token can control the Kobo, its files and its shell. A Kobo set up with `mods/tools/kobo setup` starts with it on. Tried in an emulator on 5 November: off, on with the warning, and off across a restart.
 
 ## When Nickel crashes
 
