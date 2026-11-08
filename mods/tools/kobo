@@ -305,11 +305,16 @@ SITE = "https://kobo.thesynt4x.dev/mods/"
 IMAGEFORMATS = "/usr/local/Kobo/imageformats"
 
 
+def from_site(path):
+    # The site turns away Python's own User-Agent.
+    return urllib.request.Request(SITE + path, headers={"User-Agent": "kobo-patcher-tools"})
+
+
 def site_manifest():
     """The site's mod line, as {hash, size, targets, version, release}, or None if it can't be read.
     Read over HTTPS from the site itself; the Kobo checks the signature, this only compares."""
     try:
-        with urllib.request.urlopen(SITE + "manifest.txt", timeout=20) as answer:
+        with urllib.request.urlopen(from_site("manifest.txt"), timeout=20) as answer:
             lines = answer.read().decode().splitlines()
     except (urllib.error.URLError, OSError) as e:
         print(f"couldn't read the site's manifest: {getattr(e, 'reason', e)}", file=sys.stderr)
@@ -336,7 +341,8 @@ def mods_on_kobo():
     """Every mod on the Kobo, as (path, data): the .so files in imageformats built with the kit, and
     the ones a crash guard has set aside."""
     out, _ = call("/sh", "POST", f"grep -l 'failsafe cleared' {IMAGEFORMATS}/*.so /usr/local/Kobo/*.disabled 2>/dev/null; true".encode())
-    return [(path, call("/file", path=path)[0]) for path in out.decode().split()]
+    paths = [line for line in out.decode().splitlines() if line.startswith("/usr/local/Kobo/")]
+    return [(path, call("/file", path=path)[0]) for path in paths]
 
 
 def describe_build(name, data, site):
@@ -406,7 +412,7 @@ def reset():
             if f"{model}-{firmware}" not in site["targets"]:
                 print(f"the site's Kobo Patcher isn't for {model} on {firmware}, so libpatches.so is left as it is")
                 continue
-            with urllib.request.urlopen(SITE + "libpatches.so", timeout=60) as answer:
+            with urllib.request.urlopen(from_site("libpatches.so"), timeout=60) as answer:
                 release = answer.read()
             if len(release) != site["size"] or hashlib.sha512(release).hexdigest() != site["hash"]:
                 die("the site's libpatches.so doesn't match its manifest, so nothing was installed")

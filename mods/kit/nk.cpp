@@ -53,9 +53,11 @@
 
 /* What build.sh says this build is: "release", or "dev", its commit and when. It's in the .so as
  * "nk-build: ..." too, for tools/kobo status to read. */
-__attribute__((used)) static const char build_tag[] = "nk-build: " NK_BUILD;
+static const char build_tag[] = "nk-build: " NK_BUILD;
+/* Read through a volatile, so the compiler can't work out what it says and drop the tag. */
+static const char *const volatile build_text = build_tag + sizeof "nk-build: " - 1;
 
-const char *nk_build(void) { return build_tag + strlen("nk-build: "); }
+const char *nk_build(void) { return build_text; }
 
 /* ---- Nickel's own classes, declared with only what's used ----
  * Their objects are made with the size Nickel's own code allocates, never sizeof, since these
@@ -363,6 +365,7 @@ void kit_forget_rows(void) {
 }
 
 static void *italic_label_vptr[2];
+static QLabel *label(QWidget *parent, void *vptrs[2], const char *text);
 
 static int more_index(void *layout, const char *name) {
     QBoxLayout *box = static_cast<QBoxLayout *>(layout);
@@ -424,14 +427,17 @@ static void more_built(void *view, void *) {
         row->setProperty("text", QString::fromUtf8(rows[i].title));
         layout->insertWidget(at, row, 0, 0);
         connect_to(row, "_ZN14IconButtonBase6tappedEv", "_ZN14IconButtonBase16staticMetaObjectE", rows[i].open, rows[i].arg);
-        /* The italic label, for values, is learned from the row. A mod built on a computer says so
-         * in it, so a dev build is never taken for a release. */
+        /* The italic label, for values, is learned from the row. */
         QObject *inner = find_class(row, "GenericContainerWidget");
         QObject *italic = inner ? find_class(inner, "RegularItalicLabel") : 0;
         if (italic && !italic_label_vptr[0]) take_vptrs(italic_label_vptr, italic);
-        if (italic && strcmp(nk_build(), "release") != 0) {
-            static_cast<QLabel *>(italic)->setText(QStringLiteral("DEV BUILD"));
-            static_cast<QWidget *>(italic)->show();
+        /* A mod built on a computer says so at the end of its rows, as a value is shown on a
+         * settings row, so a dev build is never taken for a release. */
+        QBoxLayout *line = inner ? qobject_cast<QBoxLayout *>(static_cast<QWidget *>(inner)->layout()) : 0;
+        if (line && strcmp(nk_build(), "release") != 0) {
+            QLabel *dev = label(0, italic_label_vptr, "DEV BUILD");
+            dev->setStyleSheet(QStringLiteral("padding-right: 17px;"));
+            line->addWidget(dev, 0, 0);
         }
     }
     nk_log("%d More rows added", rows.size());
