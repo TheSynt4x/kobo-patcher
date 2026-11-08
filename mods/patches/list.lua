@@ -44,8 +44,9 @@ local function is_value(text)
 end
 
 -- Reads a list's text. Returns {model, version, name, patches}, or nil and why. Each patch is {id,
--- title, category, group, warning, restart, cached, all, edits, settings}, and its edits are what
--- nk.patch takes. Each setting is {key, value, when_off}, when_off being nil to leave it as it is.
+-- title, category, group, warning, restart, main_window, cached, all, edits, settings}, and its
+-- edits are what nk.patch takes. Each setting is {key, value, when_off}, when_off being nil to leave
+-- it as it is.
 function list.parse(text)
   if #text > MAX_BYTES then return nil, "the patch list is too big" end
   if text == "" then return nil, "it's empty" end
@@ -73,6 +74,7 @@ function list.parse(text)
         group = fields[4] ~= "-" and fields[4] or nil,
         warning = fields[7] ~= "" and fields[7] or nil,
         restart = has_flag(fields[5], "restart"), -- only takes effect once Nickel restarts
+        main_window = has_flag(fields[5], "main-window"), -- takes effect once the main window is built again
         cached = has_flag(fields[5], "cached"), -- changes code Nickel runs once
         all = has_flag(fields[5], "all"), -- switched too by "All <category>"
         edits = {},

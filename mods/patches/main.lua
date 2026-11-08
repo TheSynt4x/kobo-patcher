@@ -178,9 +178,9 @@ local function write_settings(patch, on)
 end
 
 -- Switches one patch, and the others in its group off for one going on. Returns whether it did,
--- and whether that needs a restart.
+-- whether that needs a restart, and whether it needs the main window built again.
 local function switch(patches, rows, i, on)
-  local patch, restart = patches[i], false
+  local patch, restart, rebuild = patches[i], false, false
   if on then
     for k, other in ipairs(patches) do
       local row = rows[k]
@@ -189,6 +189,7 @@ local function switch(patches, rows, i, on)
         if ok then
           write_settings(other, false)
           restart = restart or again
+          rebuild = rebuild or other.main_window
           row.state = "off"
           choose(other, false)
           if row.toggle then set_quietly(row.toggle, false) end
@@ -199,17 +200,17 @@ local function switch(patches, rows, i, on)
   local ok, again = nk.patch.set(patch.edits, on, patch)
   if not ok then
     if rows[i].toggle then set_quietly(rows[i].toggle, not on) end
-    return false, restart
+    return false, restart, rebuild
   end
   nk.log(patch.id .. ": " .. (on and "on" or "off"))
   write_settings(patch, on)
   rows[i].state = on and "on" or "off"
   if rows[i].toggle then set_quietly(rows[i].toggle, on) end
   choose(patch, on)
-  return true, restart or again
+  return true, restart or again, rebuild or patch.main_window
 end
 
-local function finish(ok, restart)
+local function finish(ok, restart, rebuild)
   save_choices()
   nk.patch.refresh()
   if not ok then
@@ -218,6 +219,8 @@ local function finish(ok, restart)
   if restart and nk.confirm("Restart to finish",
       "Your Kobo has already used what this patch changes, so it takes effect after a restart.", "Restart", "Later") then
     nk.reboot()
+  elseif rebuild and not restart then
+    nk.main_window.rebuild()
   end
 end
 
@@ -292,15 +295,15 @@ local function build(page)
         if #warnings > 0 and not nk.confirm(category:sub(1, 1) .. category:sub(2):lower(), table.concat(warnings, "\n\n"), "Turn on", "Cancel") then
           return show_all()
         end
-        local ok, restart = true, false
+        local ok, restart, rebuild = true, false, false
         for _, i in ipairs(found) do
           if rows[i].state ~= (on and "on" or "off") then
-            local done, again = switch(patches, rows, i, on)
-            ok, restart = ok and done, restart or again
+            local done, again, window = switch(patches, rows, i, on)
+            ok, restart, rebuild = ok and done, restart or again, rebuild or window
           end
         end
         show_alls()
-        finish(ok, restart)
+        finish(ok, restart, rebuild)
       end)
       alls[#alls + 1] = show_all
     end
@@ -316,9 +319,9 @@ local function build(page)
           if on and patch.warning and not nk.confirm(patch.title, patch.warning, "Turn on", "Cancel") then
             return set_quietly(row.toggle, false)
           end
-          local ok, restart = switch(patches, rows, i, on)
+          local ok, restart, rebuild = switch(patches, rows, i, on)
           show_alls()
-          finish(ok, restart)
+          finish(ok, restart, rebuild)
         end)
       end
     end

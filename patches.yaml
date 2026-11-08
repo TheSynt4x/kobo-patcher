@@ -9,7 +9,11 @@
 #
 # A patch has an id, title, description and one of the categories below, which set the order the
 # page shows them in. It can have a warning, and a group where only one in the group can be chosen.
-# Set restart: yes if Kobo Patcher on the Kobo can only make it take effect after a restart.
+# A patch should take effect as soon as Kobo Patcher switches it, with no restart. If it changes
+# something Kobo builds once, find where Kobo builds that again by itself and use it: rebuild:
+# main-window builds the main window again (the bottom bar, then Home or My Books), as Kobo does
+# after a USB connection. Set restart: yes only when nothing Kobo does will show the change, and say
+# why beside it.
 # A patch can have settings too, for .kobo/Kobo/Kobo eReader.conf: each a key, "Section/name", the
 # value it gets when the patch goes on, and when_off, the one it gets when it's turned off, if any.
 # The page and Kobo Patcher both write them as they switch the patch.
@@ -107,7 +111,7 @@ patches:
     title: No Kobo store
     category: Ads and upsells
     description: Takes away Home and Discover, with all their recommendations, store links and Kobo Plus offers, as Kobo does when it's set up without an account. My Books opens first, and Activity gets its own button. Your account, sync, Google Drive and Dropbox stay as they are.
-    restart: yes  # Home is built when Kobo starts
+    rebuild: main-window  # Home is built with the main window
     file: libnickel.so.1.0.0
     steps:
       - BaseAddress: "MainNavView::updateVisibleButtons()"
