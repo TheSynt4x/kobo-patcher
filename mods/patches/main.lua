@@ -1,9 +1,11 @@
--- "Kobo Patcher" in Settings: every patch for this firmware, switched on and off straight away in
--- Nickel's memory. The firmware's files aren't changed. The patch list is a file in .adds, so a new
--- one arrives without reinstalling the mod, and it's read again whenever it changes. Choices are
--- saved on the Kobo and made again each time Nickel starts, before it has built anything.
+-- "Kobo Patcher" on the More page: every patch for this firmware, switched on and off straight away
+-- in Nickel's memory. The firmware's files aren't changed. The patch list is a file in .adds, so a
+-- new one arrives without reinstalling the mod, and it's read again whenever it changes. Choices
+-- are saved on the Kobo and made again each time Nickel starts, before it has built anything.
 --
--- And "KOReader" on the More page, when KOReader is in .adds, and the languages in languages.lua.
+-- Everything else this mod adds is switched there too, so Kobo's own screens stay as Kobo has
+-- them: the keyboards and My Books' filter from languages.lua. And "KOReader" on the More page,
+-- when KOReader is in .adds.
 local list = require "list"
 local update = require "update"
 local languages = require "languages"
@@ -210,9 +212,21 @@ local function switch(patches, rows, i, on)
   return true, restart or again, rebuild or patch.main_window
 end
 
-local function finish(ok, restart, rebuild)
+-- The row on Kobo Patcher's first page that says how many patches are on, while it's showing.
+local shown_summary
+
+local function summary(rows)
+  local on = 0
+  for _, row in ipairs(rows) do
+    if row.state == "on" then on = on + 1 end
+  end
+  return on == 0 and "None switched on" or ("%d of %d switched on"):format(on, #rows)
+end
+
+local function finish(ok, restart, rebuild, rows)
   save_choices()
   nk.patch.refresh()
+  if shown_summary then pcall(shown_summary.set, shown_summary, summary(rows)) end -- the screen may have closed
   if not ok then
     return nk.error("Not everything was changed", "A patch's bytes have changed since this page opened. Close it and open it again.")
   end
@@ -240,30 +254,10 @@ local function all_on(rows, found)
   return true
 end
 
-local function build(page)
-  load_list()
-  if choices_changed() then
-    read_choices()
-    if state.firmware and ready then
-      apply_choices()
-      nk.patch.refresh()
-    end
-  end
-  local firmware = state.firmware
-  page:section("THIS KOBO")
-  page:value(firmware and firmware.name or model ~= "" and model or "Unknown model", version)
-  local status
-  status = page:button("New patches and Kobo Patcher", "Check", function()
-    update.check(status, model, version, load_list)
-  end)
-  if not firmware then
-    return page:text(("No patches yet: %s. Connect to Wi-Fi and tap Check, or add them from kobo.thesynt4x.dev."):format(state.list_error))
-  end
-  if not ready then
-    return page:text("This firmware is missing something these patches need, so they're left off.")
-  end
+-- Every patch, by category, each with its switch.
+local function build_patches(page)
   page:text("Changes take effect straight away, and stay after a restart. These patches aren't made by Kobo, so use them at your own risk.")
-  local patches = firmware.patches
+  local patches = state.firmware.patches
   local rows = read_states(patches)
   -- Each category once, in the order it first comes up, with all of its patches.
   local categories, seen = {}, {}
@@ -303,7 +297,7 @@ local function build(page)
           end
         end
         show_alls()
-        finish(ok, restart, rebuild)
+        finish(ok, restart, rebuild, rows)
       end)
       alls[#alls + 1] = show_all
     end
@@ -321,7 +315,7 @@ local function build(page)
           end
           local ok, restart, rebuild = switch(patches, rows, i, on)
           show_alls()
-          finish(ok, restart, rebuild)
+          finish(ok, restart, rebuild, rows)
         end)
       end
     end
@@ -329,12 +323,42 @@ local function build(page)
   quiet = quiet - 1
 end
 
+-- The first page: this Kobo and its updates, how many patches are on, and the rest this mod adds.
+local function build(page)
+  load_list()
+  if choices_changed() then
+    read_choices()
+    if state.firmware and ready then
+      apply_choices()
+      nk.patch.refresh()
+    end
+  end
+  local firmware = state.firmware
+  page:section("THIS KOBO")
+  page:value(firmware and firmware.name or model ~= "" and model or "Unknown model", version)
+  local status
+  status = page:button("New patches and Kobo Patcher", "Check", function()
+    update.check(status, model, version, load_list)
+  end)
+  page:section("PATCHES")
+  shown_summary = nil
+  if not firmware then
+    page:text(("No patches yet: %s. Connect to Wi-Fi and tap Check, or add them from kobo.thesynt4x.dev."):format(state.list_error))
+  elseif not ready then
+    page:text("This firmware is missing something these patches need, so they're left off.")
+  else
+    shown_summary = page:button(summary(read_states(firmware.patches)), "Edit", function()
+      page:open(build_patches, "Patches")
+    end)
+  end
+  languages.add_to(page)
+end
+
 if not state.started then
   state.started = true
   read_choices()
   load_list()
 end
-nk.settings{name = "Kobo Patcher", build = build}
 
 -- Keyboards in your languages, a filter for them in My Books, and dictionaries by them.
 languages.start()
@@ -349,3 +373,8 @@ if nk.file.exists(KOREADER) then
     nk.spawn("exec " .. KOREADER)
   end}
 end
+
+-- First of the mods' rows, as the one that says what else is changed.
+nk.more{name = "Kobo Patcher", icon = "patcher", first = true, open = function()
+  nk.screen{title = "Kobo Patcher", small_title = "More", build = build}
+end}

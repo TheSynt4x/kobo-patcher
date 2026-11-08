@@ -21,6 +21,7 @@ While you work on a mod, its scripts can come from `.adds/<mod>/dev/` on the Kob
 - **Callbacks can wait.** Each runs as a Lua coroutine, so `nk.http.get`, `nk.download`, `nk.confirm` and `nk.sleep` wait for their answer without stopping Nickel. A few callbacks have to answer straight away, and say so below: they can't wait.
 - **A Lua error can't take Nickel down.** It's shown in a dialog, and the mod carries on.
 - **Firmware differences are handled by the kit.** Every Nickel function the kit uses is checked when the mod loads. A call that needs something this firmware lacks returns false or does nothing, and the rest of the mod still works.
+- **A mod's own screens go on the More page,** one row per mod with its icon, and its settings there too, so Kobo's Settings and its other screens stay as Kobo has them. Where a mod changes one of Kobo's own screens, the switch for it is on the mod's screen, so there's one place to find everything a mod does.
 - **The crash guard.** A mod that crashes Nickel as it starts, or freezes it, is set aside, and the Kobo starts again without it. See "What keeps a Kobo safe" in `README.md`.
 
 ## Places: where a mod shows up
@@ -29,9 +30,9 @@ While you work on a mod, its scripts can come from `.adds/<mod>/dev/` on the Kob
 
 A row in Kobo's Settings, opening a screen built by `build(page)`. `after` or `before` name one of Kobo's rows, such as `"deviceInformation"`, `"account"` or `"language"`; without either it goes at the top. A mod can add several. If the named row isn't there, the row goes at the top and the log says why.
 
-### `nk.more{name = , icon = , open = , after = or before = }`
+### `nk.more{name = , icon = , open = , after = or before = , first = }`
 
-A row on Kobo's More page, with `icons/<icon>.png`, running `open()`. `after` or `before` name one of Kobo's rows, such as `"wishlistButton"`, `"betaFeaturesButton"` or `"helpButton"`; without either it goes above Settings. A mod can add several.
+A row on Kobo's More page, with `icons/<icon>.png`, running `open()`. The icon is scaled as Kobo's own are on each Kobo, 40 pixels on the Nia, so draw it larger than it shows: 80 pixels, with the drawing near its edges. `after` or `before` name one of Kobo's rows, such as `"wishlistButton"`, `"betaFeaturesButton"` or `"helpButton"`; without either it goes after Help, the last of Kobo's rows, with the other mods' rows, so what's added is together below what's Kobo's. `first = true` puts it first of them. A mod can add several.
 
 Rows are put in each time Kobo builds the screen, so when `main.lua` runs again, renamed rows show their new name and removed ones go.
 

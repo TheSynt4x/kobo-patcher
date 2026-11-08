@@ -2,9 +2,9 @@
 -- bar, an entry per language of your books in My Books' filter menu, and each book's dictionary
 -- by its cleaned language.
 --
--- Kobo's "Language and dictionaries" page becomes "Languages", with a KEYBOARDS section under
--- Kobo's own two, whose Edit opens the list of keyboards to tick. Kobo's interface language and its
--- dictionaries stay Kobo's. With nothing ticked, the keyboard is Kobo's usual one.
+-- The keyboards and the filter are switched in Kobo Patcher, on the More page, which add_to fills
+-- in. Kobo's own "Language and dictionaries" page is left as Kobo has it. With nothing ticked, the
+-- keyboard is Kobo's usual one.
 local languages = {}
 
 -- Kobo's keyboards, by the language code that gets each one. Russian has Latin letters too.
@@ -57,8 +57,15 @@ local function summary()
   return #names == 0 and "Kobo's usual keyboard" or table.concat(names, ", ")
 end
 
-local function edit_keyboards()
-  nk.screen{title = "Keyboards", small_title = "Languages", build = function(page)
+-- The row in Kobo Patcher that names the keyboards ticked, while it's showing.
+local shown_summary
+
+local function show_summary()
+  if shown_summary then pcall(shown_summary.set, shown_summary, summary()) end -- the screen may have closed
+end
+
+local function edit_keyboards(over)
+  over:open(function(page)
     page:text("Tick the keyboards you type in. With two or more, the key left of the space bar switches between them, in the order they were ticked.")
     local list = chosen()
     for _, keyboard in ipairs(KEYBOARDS) do
@@ -71,9 +78,10 @@ local function edit_keyboards()
         end
         if ticked then now[#now + 1] = keyboard.code end
         save(now)
+        show_summary()
       end)
     end
-  end}
+  end, "Keyboards")
 end
 
 -- ---- the keyboard ----
@@ -101,33 +109,6 @@ local function hook_keyboard()
   }
 end
 
--- ---- the Languages page ----
-
-local function hook_page()
-  -- The row in Settings that opens it.
-  nk.on_screen("N3SettingsView", function(view)
-    local row = view:find("language")
-    if row then row:set("Languages") end
-  end)
-  nk.on_screen("N3SettingsLanguageView", function(view)
-    local content = view:find("mainContent")
-    if content then
-      content:add_section("KEYBOARDS")
-      content:add_button(summary(), "Edit", edit_keyboards)
-    end
-    -- Its title is the screen's, around the page, which Kobo puts it in and names a moment later.
-    local tries = 0
-    local function rename()
-      local ok, top = pcall(view.top, view)
-      local title = ok and top and top:class() ~= view:class() and top:find("titleLarge")
-      if title and title:text() ~= "" then return title:set("Languages") end
-      tries = tries + 1
-      if tries < 20 then nk.after(50, rename) end
-    end
-    nk.after(0, rename)
-  end)
-end
-
 -- ---- the filter in My Books ----
 
 -- Three-letter codes whose first two letters aren't the language, as swe is sv and not Swahili.
@@ -150,7 +131,13 @@ function languages.clean(code)
   return THREE[c] or c
 end
 
+-- On unless it's been switched off in Kobo Patcher.
+local function filter_on()
+  return nk.pref("book_languages", "on") ~= "off"
+end
+
 local function filters()
+  if not filter_on() then return {} end
   local groups, order = {}, {}
   for _, raw in ipairs(nk.books.languages()) do
     local code = languages.clean(raw)
@@ -183,9 +170,18 @@ local function hook_dictionaries()
   nk.dictionaries.installed_first()
 end
 
+-- Kobo Patcher's sections for them.
+function languages.add_to(page)
+  page:section("KEYBOARDS")
+  shown_summary = page:button(summary(), "Edit", function() edit_keyboards(page) end)
+  page:section("MY BOOKS")
+  page:toggle("A filter for each language of your books", filter_on(), function(on)
+    nk.set_pref("book_languages", on and "on" or "off")
+  end)
+end
+
 function languages.start()
   hook_keyboard()
-  hook_page()
   nk.books.filters(filters)
   hook_dictionaries()
 end

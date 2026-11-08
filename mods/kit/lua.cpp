@@ -652,7 +652,8 @@ static void open_more(void *arg) {
 
 /* nk.more{name = , icon = , open = , after = or before = }: a row on Kobo's More page, with
  * icons/<icon>.png, running open(). after or before name one of Kobo's rows, such as
- * "betaFeaturesButton"; without either it goes above Settings. A mod can add several. */
+ * "betaFeaturesButton"; without either it goes after Help, with the other mods' rows, and first of
+ * them with first = true. A mod can add several. */
 static int l_more(lua_State *co) {
     luaL_checktype(co, 1, LUA_TTABLE);
     const char *name = opt_field(co, "name"), *icon = opt_field(co, "icon");
@@ -662,8 +663,11 @@ static int l_more(lua_State *co) {
     if (!png) return luaL_error(co, "no icons/%s.png", icon);
     bool after;
     const char *next_to = beside(co, "nk.more", &after);
+    lua_getfield(co, 1, "first");
+    bool first = lua_toboolean(co, -1);
+    lua_pop(co, 1);
     Place *place = new_place(co, 'm', name, fn_field(co, "open", "nk.more"));
-    kit_more_row(name, png->data, png->size, next_to, after, open_more, place);
+    kit_more_row(name, png->data, png->size, next_to, after, first, open_more, place);
     return 0;
 }
 

@@ -148,12 +148,6 @@ static void *alloc(size_t size) {
 
 static QString qstr(const char *text) { return QString::fromUtf8(text); }
 
-static void set_pixmap_property(QObject *object, const char *name, const unsigned char *png, unsigned size) {
-    QPixmap pixmap;
-    pixmap.loadFromData(png, size, "PNG", 0);
-    object->setProperty(name, pixmap);
-}
-
 static const char *class_name(QObject *object) { return object->metaObject()->className(); }
 
 static QObject *find_named(QObject *parent, const char *name) {
@@ -346,7 +340,7 @@ int nk_on_screen(const char *cls, NkBuiltFn fn, void *arg) {
  * in when the screen is built, so changed rows show the next time it opens. */
 struct AddedRow {
     QByteArray title, beside;
-    bool after;
+    bool after, first;
     const unsigned char *icon;
     unsigned icon_size;
     NkFn open;
@@ -370,7 +364,21 @@ static int more_index(void *layout, const char *name) {
     return -1;
 }
 
-/* More: Kobo's rows are IconLeftButtons in a GenericContainerWidget's layout. */
+/* A row's icon, scaled as Kobo's own are on this Kobo, which are larger on larger screens. Kobo's
+ * pictures are 56 pixels on the Nia, with room around the drawing, and a mod's icon, drawn nearer its
+ * edges, matches them at 40: so it's shown at 40/56 of Kobo's size. Without Kobo's, as it's drawn. */
+static void set_more_icon(QObject *row, const QSize &kobo, const unsigned char *png, unsigned size) {
+    QPixmap pixmap;
+    pixmap.loadFromData(png, size, "PNG", 0);
+    QSize wanted = kobo * 40 / 56;
+    if (!pixmap.isNull() && wanted.isValid() && !wanted.isEmpty() && wanted != pixmap.size())
+        pixmap = pixmap.scaled(wanted, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    row->setProperty("pixmap", pixmap);
+}
+
+/* More: Kobo's rows are IconLeftButtons in a GenericContainerWidget's layout. A row that names none
+ * of Kobo's goes after Help, the last of them, so the mods' rows are together below Kobo's own. A
+ * row that asks to be first goes straight after Help. */
 static void more_built(void *view, void *) {
     if (!more_rows || more_rows->isEmpty()) return;
     QObject *container = find_class(static_cast<QObject *>(view), "GenericContainerWidget");
@@ -381,13 +389,20 @@ static void more_built(void *view, void *) {
     }
     QWidget *box = static_cast<QWidget *>(container);
     QList<AddedRow> rows = *more_rows;
+    QWidget *settings = layout->itemAt(more_index(layout, "settingsButton"))->widget();
+    QSize kobo_icon = settings ? settings->property("pixmap").value<QPixmap>().size() : QSize();
+    int firsts = 0;
     for (int i = 0; i < rows.size(); i++) {
-        QByteArray beside = rows[i].beside.isEmpty() ? QByteArray("settingsButton") : rows[i].beside;
+        bool last = rows[i].beside.isEmpty();
+        QByteArray beside = last ? QByteArray("helpButton") : rows[i].beside;
         int at = more_index(layout, beside.constData());
         if (at < 0) {
             nk_log("no %s on More for the row %s, so it goes above Settings", beside.constData(), rows[i].title.constData());
             at = more_index(layout, "settingsButton");
-        } else if (rows[i].after) {
+        } else if (last && rows[i].first) {
+            /* Straight after Help, after this mod's own first rows, so they keep their order. */
+            at += 1 + firsts++;
+        } else if (last || rows[i].after) {
             /* After any of ours already there, so rows keep their order. */
             for (at++; at < layout->count(); at++) {
                 QWidget *next = layout->itemAt(at)->widget();
@@ -396,7 +411,7 @@ static void more_built(void *view, void *) {
         }
         IconLeftButton *row = new (alloc(0x58)) IconLeftButton(box);
         row->setObjectName(QStringLiteral("nkMoreRow"));
-        set_pixmap_property(row, "pixmap", rows[i].icon, rows[i].icon_size);
+        set_more_icon(row, kobo_icon, rows[i].icon, rows[i].icon_size);
         row->setProperty("text", QString::fromUtf8(rows[i].title));
         layout->insertWidget(at, row, 0, 0);
         connect_to(row, "_ZN14IconButtonBase6tappedEv", "_ZN14IconButtonBase16staticMetaObjectE", rows[i].open, rows[i].arg);
@@ -408,17 +423,17 @@ static void more_built(void *view, void *) {
     nk_log("%d More rows added", rows.size());
 }
 
-void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, NkFn open, void *arg) {
+void kit_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, const char *beside, bool after, bool first, NkFn open, void *arg) {
     if (!more_rows) {
         more_rows = new QList<AddedRow>;
         nk_on_screen("MoreView", more_built, 0);
     }
-    AddedRow row = {title, beside ? beside : "", after, icon_png, icon_size, open, arg};
+    AddedRow row = {title, beside ? beside : "", after, first, icon_png, icon_size, open, arg};
     *more_rows << row;
 }
 
 void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg) {
-    kit_more_row(title, icon_png, icon_size, 0, false, open, arg);
+    kit_more_row(title, icon_png, icon_size, 0, false, false, open, arg);
 }
 
 /* Every symbol the mod uses, listed by build.sh: what it leaves undefined, and the names this file
@@ -510,7 +525,7 @@ void kit_settings_row(const char *title, const char *beside, bool after, NkFn op
         settings_rows = new QList<AddedRow>;
         nk_on_screen("N3SettingsView", settings_built, 0);
     }
-    AddedRow row = {title, beside ? beside : "", after, 0, 0, open, arg};
+    AddedRow row = {title, beside ? beside : "", after, false, 0, 0, open, arg};
     *settings_rows << row;
 }
 
