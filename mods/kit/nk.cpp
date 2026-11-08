@@ -148,12 +148,6 @@ static void *alloc(size_t size) {
 
 static QString qstr(const char *text) { return QString::fromUtf8(text); }
 
-static void set_pixmap_property(QObject *object, const char *name, const unsigned char *png, unsigned size) {
-    QPixmap pixmap;
-    pixmap.loadFromData(png, size, "PNG", 0);
-    object->setProperty(name, pixmap);
-}
-
 static const char *class_name(QObject *object) { return object->metaObject()->className(); }
 
 static QObject *find_named(QObject *parent, const char *name) {
@@ -370,6 +364,18 @@ static int more_index(void *layout, const char *name) {
     return -1;
 }
 
+/* A row's icon, scaled as Kobo's own are on this Kobo, which are larger on larger screens. Kobo's
+ * pictures are 56 pixels on the Nia, with room around the drawing, and a mod's icon, drawn nearer its
+ * edges, matches them at 40: so it's shown at 40/56 of Kobo's size. Without Kobo's, as it's drawn. */
+static void set_more_icon(QObject *row, const QSize &kobo, const unsigned char *png, unsigned size) {
+    QPixmap pixmap;
+    pixmap.loadFromData(png, size, "PNG", 0);
+    QSize wanted = kobo * 40 / 56;
+    if (!pixmap.isNull() && wanted.isValid() && !wanted.isEmpty() && wanted != pixmap.size())
+        pixmap = pixmap.scaled(wanted, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    row->setProperty("pixmap", pixmap);
+}
+
 /* More: Kobo's rows are IconLeftButtons in a GenericContainerWidget's layout. A row that names none
  * of Kobo's goes after Help, the last of them, so the mods' rows are together below Kobo's own. A
  * row that asks to be first goes straight after Help. */
@@ -383,6 +389,8 @@ static void more_built(void *view, void *) {
     }
     QWidget *box = static_cast<QWidget *>(container);
     QList<AddedRow> rows = *more_rows;
+    QWidget *settings = layout->itemAt(more_index(layout, "settingsButton"))->widget();
+    QSize kobo_icon = settings ? settings->property("pixmap").value<QPixmap>().size() : QSize();
     int firsts = 0;
     for (int i = 0; i < rows.size(); i++) {
         bool last = rows[i].beside.isEmpty();
@@ -403,7 +411,7 @@ static void more_built(void *view, void *) {
         }
         IconLeftButton *row = new (alloc(0x58)) IconLeftButton(box);
         row->setObjectName(QStringLiteral("nkMoreRow"));
-        set_pixmap_property(row, "pixmap", rows[i].icon, rows[i].icon_size);
+        set_more_icon(row, kobo_icon, rows[i].icon, rows[i].icon_size);
         row->setProperty("text", QString::fromUtf8(rows[i].title));
         layout->insertWidget(at, row, 0, 0);
         connect_to(row, "_ZN14IconButtonBase6tappedEv", "_ZN14IconButtonBase16staticMetaObjectE", rows[i].open, rows[i].arg);

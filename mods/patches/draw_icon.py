@@ -8,6 +8,7 @@ import zlib
 from pathlib import Path
 
 SIZE, SCALE = 40, 8
+OUT = 2  # drawn at twice the size, 80 pixels, for the kit to scale to Kobo's own icons
 LINE = 0.85
 
 
@@ -63,16 +64,16 @@ def chunk(kind, data):
 
 def draw(ink):
     rows = []
-    for row in range(SIZE):
+    for row in range(SIZE * OUT):
         line = bytearray([0])
-        for column in range(SIZE):
+        for column in range(SIZE * OUT):
             hits = sum(
-                ink((column + (i + 0.5) / SCALE) - SIZE / 2, (row + (j + 0.5) / SCALE) - SIZE / 2)
+                ink((column + (i + 0.5) / SCALE) / OUT - SIZE / 2, (row + (j + 0.5) / SCALE) / OUT - SIZE / 2)
                 for i in range(SCALE) for j in range(SCALE)
             )
             line += bytes([0, round(255 * hits / SCALE**2)])
         rows.append(bytes(line))
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", SIZE, SIZE, 8, 4, 0, 0, 0))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", SIZE * OUT, SIZE * OUT, 8, 4, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b""))
 
 

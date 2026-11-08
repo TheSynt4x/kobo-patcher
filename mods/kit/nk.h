@@ -44,8 +44,8 @@ typedef void (*NkBuiltFn)(void *view, void *arg);
 int nk_on_screen(const char *cls, NkBuiltFn built, void *arg);
 
 /* Add a row to the More page after Help, with the other mods' rows, with a PNG icon built into the
- * mod. Tapping it runs open(arg). Call from nk_mod_init; a mod can add several. If More isn't as
- * expected, there's no row. */
+ * mod, scaled as Kobo's own icons there are. Tapping it runs open(arg). Call from nk_mod_init; a
+ * mod can add several. If More isn't as expected, there's no row. */
 void nk_more_row(const char *title, const unsigned char *icon_png, unsigned icon_size, NkFn open, void *arg);
 
 /* Add a row at the top of Kobo's Settings list, styled like Kobo's own. Tapping it runs open(arg).

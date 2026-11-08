@@ -32,7 +32,7 @@ A row in Kobo's Settings, opening a screen built by `build(page)`. `after` or `b
 
 ### `nk.more{name = , icon = , open = , after = or before = , first = }`
 
-A row on Kobo's More page, with `icons/<icon>.png`, running `open()`. `after` or `before` name one of Kobo's rows, such as `"wishlistButton"`, `"betaFeaturesButton"` or `"helpButton"`; without either it goes after Help, the last of Kobo's rows, with the other mods' rows, so what's added is together below what's Kobo's. `first = true` puts it first of them. A mod can add several.
+A row on Kobo's More page, with `icons/<icon>.png`, running `open()`. The icon is scaled as Kobo's own are on each Kobo, 40 pixels on the Nia, so draw it larger than it shows: 80 pixels, with the drawing near its edges. `after` or `before` name one of Kobo's rows, such as `"wishlistButton"`, `"betaFeaturesButton"` or `"helpButton"`; without either it goes after Help, the last of Kobo's rows, with the other mods' rows, so what's added is together below what's Kobo's. `first = true` puts it first of them. A mod can add several.
 
 Rows are put in each time Kobo builds the screen, so when `main.lua` runs again, renamed rows show their new name and removed ones go.
 
