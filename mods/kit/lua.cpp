@@ -1088,6 +1088,8 @@ extern "C" void nk_mod_init(void) {
     kit_open_dictionaries(L);
     lua_pushstring(L, NK_NAME);
     lua_setfield(L, -2, "name");
+    lua_pushstring(L, nk_build());
+    lua_setfield(L, -2, "build");
     lua_setglobal(L, "nk");
     lua_pushcfunction(L, l_require);
     lua_setglobal(L, "require");

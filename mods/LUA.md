@@ -134,6 +134,7 @@ Each returns false if this firmware isn't as expected. Calling `nk.books.languag
 - `nk.reboot()`: restarts the Kobo the way Kobo does.
 - `nk.spawn(command)`: runs a shell command outside Nickel. Nickel may well stop, as when it starts KOReader.
 - `nk.log(...)`, and `print`: to Nickel's log, with the mod's name. `nk.name` is the mod's name.
+- `nk.build`: what this build of the mod is. `"release"` when the site's CI built it (`KOBO_RELEASE=1 build.sh`), otherwise `"dev"`, the commit, `+` if the mod or the kit had changes not committed, and when, such as `"dev 3616efb+ 2026-11-08 14:56"`. A dev build's rows on the More page say DEV BUILD, without the mod doing anything.
 
 ## Dialogs
 

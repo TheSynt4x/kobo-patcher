@@ -47,6 +47,15 @@
 /* Outside imageformats, because Qt would still load libpatches.so.anything from in there. */
 #define DISABLED_AT "/usr/local/Kobo/" NK_NAME ".disabled"
 #define FAILSAFE_SECONDS 20
+#ifndef NK_BUILD
+#define NK_BUILD "dev"
+#endif
+
+/* What build.sh says this build is: "release", or "dev", its commit and when. It's in the .so as
+ * "nk-build: ..." too, for tools/kobo status to read. */
+__attribute__((used)) static const char build_tag[] = "nk-build: " NK_BUILD;
+
+const char *nk_build(void) { return build_tag + strlen("nk-build: "); }
 
 /* ---- Nickel's own classes, declared with only what's used ----
  * Their objects are made with the size Nickel's own code allocates, never sizeof, since these
@@ -415,10 +424,15 @@ static void more_built(void *view, void *) {
         row->setProperty("text", QString::fromUtf8(rows[i].title));
         layout->insertWidget(at, row, 0, 0);
         connect_to(row, "_ZN14IconButtonBase6tappedEv", "_ZN14IconButtonBase16staticMetaObjectE", rows[i].open, rows[i].arg);
-        /* The italic label, for values, is learned from the row. */
+        /* The italic label, for values, is learned from the row. A mod built on a computer says so
+         * in it, so a dev build is never taken for a release. */
         QObject *inner = find_class(row, "GenericContainerWidget");
         QObject *italic = inner ? find_class(inner, "RegularItalicLabel") : 0;
         if (italic && !italic_label_vptr[0]) take_vptrs(italic_label_vptr, italic);
+        if (italic && strcmp(nk_build(), "release") != 0) {
+            static_cast<QLabel *>(italic)->setText(QStringLiteral("DEV BUILD"));
+            static_cast<QWidget *>(italic)->show();
+        }
     }
     nk_log("%d More rows added", rows.size());
 }

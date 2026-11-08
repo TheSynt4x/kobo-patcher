@@ -40,11 +40,22 @@ fi
 qt="$("$kit/qt-headers.sh")"
 vendor="$("$kit/vendor.sh")"
 
+# What this build is, which the kit shows on Kobo's More page: "release" when the site's CI builds
+# it with KOBO_RELEASE=1, otherwise "dev", the commit, + if the mod or the kit has changes not
+# committed, and when. A release says nothing more, so the same code always builds the same bytes.
+changed="$( { git -C "$folder" status --porcelain -- .; git -C "$kit" status --porcelain -- .; } 2>/dev/null)"
+if [ "$KOBO_RELEASE" = 1 ]; then
+  [ -z "$changed" ] || { echo "a release is built from committed code, and $name or the kit has changes" >&2; exit 1; }
+  stamp=release
+else
+  stamp="dev $(git -C "$folder" rev-parse --short HEAD 2>/dev/null || echo unknown)${changed:++} $(date '+%Y-%m-%d %H:%M')"
+fi
+
 flags="-target arm-linux-gnueabihf.2.17 -mcpu=cortex_a7 -Os -fvisibility=hidden -ffunction-sections -fdata-sections
   -fno-sanitize=all -fno-unwind-tables -fno-asynchronous-unwind-tables -g0 -fPIC"
 cxx() {
   zig c++ -c $flags -std=c++11 -fno-exceptions -frtti -fvisibility-inlines-hidden -Wno-gnu-inline-cpp-without-extern \
-    -DNK_NAME="\"$name\"" -I"$out" -I"$kit" -I"$vendor" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" -I"$qt/QtSql" \
+    -DNK_NAME="\"$name\"" -DNK_BUILD="\"$stamp\"" -I"$out" -I"$kit" -I"$vendor" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" -I"$qt/QtSql" \
     -o "$2" "$1"
 }
 objects=

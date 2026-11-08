@@ -23,6 +23,11 @@ Then, on Wi-Fi:    tools/kobo find               finds the Kobo on this network 
   undev MOD                 back to the built-in scripts (removes .adds/MOD/dev, then reboots)
   install MOD [--no-reboot] build MOD, put it on the Kobo, reboot and wait for it
   reboot                    reboot and wait for it
+  status                    what's on the Kobo: each mod, whether it's the site's release or a
+                            DEV BUILD and which, what a crash guard set aside, and dev switches
+  reset                     back to what the site gives: removes update-url and pushed scripts,
+                            and installs the site's Kobo Patcher if it has another. Mods with no
+                            release, and devtools, stay
   sh COMMAND                run a shell command on the Kobo, as root
   ls PATH | get PATH [FILE] | put FILE PATH | rm PATH
   run FILE [--repeat N]     runs a scenario: a tools/kobo command on each line (# starts a
@@ -37,7 +42,7 @@ build/device. KOBO=host overrides the host.
 --emu before the command drives an emulator on this computer instead, through devtools there: one
 that forwards 127.0.0.1:18484 to its port 8484, with its token in build/emulator.
 """
-import concurrent.futures, json, os, re, secrets, shlex, shutil, socket, subprocess, sys, tarfile, time
+import concurrent.futures, hashlib, json, os, re, secrets, shlex, shutil, socket, subprocess, sys, tarfile, time
 import urllib.error, urllib.parse, urllib.request
 
 MODS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -294,6 +299,129 @@ def install(mod, then_reboot=True):
         reboot()
 
 
+# ---- what's on the Kobo, and back to the site's ----
+
+SITE = "https://kobo.thesynt4x.dev/mods/"
+IMAGEFORMATS = "/usr/local/Kobo/imageformats"
+
+
+def site_manifest():
+    """The site's mod line, as {hash, size, targets, version, release}, or None if it can't be read.
+    Read over HTTPS from the site itself; the Kobo checks the signature, this only compares."""
+    try:
+        with urllib.request.urlopen(SITE + "manifest.txt", timeout=20) as answer:
+            lines = answer.read().decode().splitlines()
+    except (urllib.error.URLError, OSError) as e:
+        print(f"couldn't read the site's manifest: {getattr(e, 'reason', e)}", file=sys.stderr)
+        return None
+    for line in lines:
+        f = line.split("\t")
+        if f[0] == "mod" and len(f) >= 5:
+            return {"hash": f[1], "size": int(f[2]), "targets": f[3].split(","), "version": f[4], "release": f[5:] == ["release"]}
+    return None
+
+
+def exists(path):
+    folder, name = path.rsplit("/", 1)
+    return any(line.split(" ", 1)[1] == name for line in text("/ls", path=folder).splitlines() if " " in line)
+
+
+def kobo_model():
+    """This Kobo's model and firmware, from .kobo/version, such as ("N306", "4.38.23852")."""
+    fields = text("/file", path=f"{ONBOARD}/.kobo/version").strip().split(",")
+    return fields[0][:4], fields[2] if len(fields) > 2 else "?"
+
+
+def mods_on_kobo():
+    """Every mod on the Kobo, as (path, data): the .so files in imageformats built with the kit, and
+    the ones a crash guard has set aside."""
+    out, _ = call("/sh", "POST", f"grep -l 'failsafe cleared' {IMAGEFORMATS}/*.so /usr/local/Kobo/*.disabled 2>/dev/null; true".encode())
+    return [(path, call("/file", path=path)[0]) for path in out.decode().split()]
+
+
+def describe_build(name, data, site):
+    """Whether a mod is the site's release, another release build, or a dev build, and which."""
+    found = re.search(rb"nk-build: ([^\0]*)", data)
+    stamp = found.group(1).decode(errors="replace") if found else None
+    if site and name == "libpatches.so" and hashlib.sha512(data).hexdigest() == site["hash"]:
+        return f"release {site['version']}, the site's"
+    if stamp == "release":
+        return "release build, but not the site's current one"
+    if stamp:
+        return f"DEV BUILD {stamp[4:]}".rstrip()
+    return "built before builds were marked, so it can't say"
+
+
+def status():
+    model, firmware = kobo_model()
+    print(f"{model} on {firmware}, at {config()['host']}\n")
+    site = site_manifest()
+    for path, data in mods_on_kobo():
+        name = path.rsplit("/", 1)[1]
+        aside = "  (set aside by its crash guard)" if path.endswith(".disabled") else ""
+        print(f"  {name:<22} {describe_build('lib' + name.replace('.disabled', '.so') if aside else name, data, site)}{aside}")
+    switches = []
+    url = f"{ONBOARD}/.adds/patches/update-url"
+    if exists(url):
+        switches.append(f"Check updates from {text('/file', path=url).strip()} (.adds/patches/update-url)")
+    for line in text("/ls", path=f"{ONBOARD}/.adds").splitlines():
+        if line.startswith("d ") and exists(f"{ONBOARD}/.adds/{line[2:]}/dev"):
+            switches.append(f"{line[2:]} runs scripts from .adds/{line[2:]}/dev, pushed with tools/kobo push")
+    if exists(f"{ONBOARD}/.kobo/KoboRoot.tgz"):
+        switches.append("a KoboRoot.tgz waits in .kobo, installed at the next restart")
+    switches.append("devtools, with its token in .adds/devtools: how tools/kobo reaches the Kobo")
+    print("\nDev switches:")
+    for switch in switches:
+        print(f"  {switch}")
+    choices = text("/file", path=f"{ONBOARD}/.adds/patches/choices.txt") if exists(f"{ONBOARD}/.adds/patches/choices.txt") else ""
+    on = [line.split()[0] for line in choices.splitlines() if line.endswith(" on")]
+    print(f"\nPatches switched on in Kobo Patcher: {len(on)}" + (f" ({', '.join(on)})" if on else ""))
+    print("The site's record of what it installed: " + ("there" if exists(f"{ONBOARD}/.adds/kobo-patcher.json") else "none"))
+
+
+def reset():
+    """Back to what the site gives: dev scripts and update-url gone, and Kobo Patcher the site's
+    release. Mods with no release are left, and so is devtools, which this goes through."""
+    site = site_manifest()
+    if not site:
+        die("can't reset without the site's manifest")
+    model, firmware = kobo_model()
+    changed = False
+    url = f"{ONBOARD}/.adds/patches/update-url"
+    if exists(url):
+        call("/file", "DELETE", path=url)
+        print("removed .adds/patches/update-url: Check updates from the site again")
+        changed = True
+    for line in text("/ls", path=f"{ONBOARD}/.adds").splitlines():
+        if line.startswith("d ") and exists(f"{ONBOARD}/.adds/{line[2:]}/dev"):
+            call("/file", "DELETE", path=f"{ONBOARD}/.adds/{line[2:]}/dev")
+            print(f"removed .adds/{line[2:]}/dev: {line[2:]} runs its built-in scripts again")
+            changed = True
+    for path, data in mods_on_kobo():
+        name = path.rsplit("/", 1)[1]
+        if name in ("libpatches.so", "patches.disabled"):
+            if hashlib.sha512(data).hexdigest() == site["hash"] and name == "libpatches.so":
+                print(f"libpatches.so is the site's release {site['version']} already")
+                continue
+            if f"{model}-{firmware}" not in site["targets"]:
+                print(f"the site's Kobo Patcher isn't for {model} on {firmware}, so libpatches.so is left as it is")
+                continue
+            with urllib.request.urlopen(SITE + "libpatches.so", timeout=60) as answer:
+                release = answer.read()
+            if len(release) != site["size"] or hashlib.sha512(release).hexdigest() != site["hash"]:
+                die("the site's libpatches.so doesn't match its manifest, so nothing was installed")
+            put(release, f"{IMAGEFORMATS}/libpatches.so")
+            if name == "patches.disabled":
+                call("/file", "DELETE", path=path)
+            print(f"installed the site's release {site['version']} of libpatches.so")
+            changed = True
+        elif name != "libdevtools.so":
+            print(f"{name} has no release on the site, so it's left as it is: {describe_build(name, data, site)}")
+    print("devtools stays, so this can still reach the Kobo: switch it off in More, Developer tools")
+    if changed:
+        reboot()
+
+
 def setup(mount):
     if not os.path.isdir(os.path.join(mount, ".kobo")):
         die(f"no Kobo at {mount}: plug it in and mount it, or give its mount point")
@@ -493,6 +621,10 @@ def main(argv):
         reboot()
     elif command == "install":
         install(args[0], "--no-reboot" not in args)
+    elif command == "status":
+        status()
+    elif command == "reset":
+        reset()
     elif command == "reboot":
         reboot()
     elif command == "sh":
