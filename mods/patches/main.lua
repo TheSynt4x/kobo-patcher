@@ -336,6 +336,12 @@ local function build(page)
   local firmware = state.firmware
   page:section("THIS KOBO")
   page:value(firmware and firmware.name or model ~= "" and model or "Unknown model", version)
+  if nk.build == "release" then
+    page:value("Kobo Patcher", tostring(update.VERSION))
+  else
+    page:value("Kobo Patcher", ("%d, dev build"):format(update.VERSION))
+    page:text(("Built on a computer, not the site's: %s. Check offers the site's release."):format(nk.build:sub(5)))
+  end
   local status
   status = page:button("New patches and Kobo Patcher", "Check", function()
     update.check(status, model, version, load_list)

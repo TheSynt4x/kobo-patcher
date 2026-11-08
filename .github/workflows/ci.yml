@@ -79,13 +79,16 @@ jobs:
         with:
           path: mods/build/kit-vendor
           key: kit-vendor-${{ hashFiles('mods/kit/vendor.sh') }}
-      # Kobo Patcher only takes updates signed with this key. It's an Ed25519 key in PEM.
+      # Kobo Patcher only takes updates signed with this key. It's an Ed25519 key in PEM. Only this
+      # build is a release; any other says DEV BUILD on the Kobo. A changed libpatches.so needs a
+      # higher update.VERSION than the site's, so one version is always one build.
       - name: Build and sign the mods
         env:
           KOBO_PATCHER_SIGNING_KEY: ${{ secrets.KOBO_PATCHER_SIGNING_KEY }}
+          KOBO_RELEASE: "1"
         run: |
           make mods
-          node tools/sign_mods.mjs --require
+          node tools/sign_mods.mjs --require --release --against https://kobo.thesynt4x.dev/mods/
           sha256sum web/mods/*.* web/mods/lists/*.txt
       - name: Set up SSH
         env:

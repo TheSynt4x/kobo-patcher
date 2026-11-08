@@ -6,14 +6,15 @@
 -- The manifest, from tools/sign_mods.mjs:
 --
 --   kobo-patcher-manifest	1
---   mod	<sha512>	<size>	<model-firmware,...>	<version>     the Kobos the mod updates itself on
+--   mod	<sha512>	<size>	<model-firmware,...>	<version>	<release or dev>     the Kobos the mod updates itself on
 --   list	<model-firmware>	<sha512>	<size>     the patch list, in lists/
 local update = {}
 
 -- This mod's version. A mod is only offered when the manifest's is higher, so a newer build is
 -- never replaced by an older one, as one built from a branch would be by the site's. Raise it
--- with each change to the mod that should reach Kobos: tools/sign_mods.mjs reads it from here.
-update.VERSION = 9
+-- with each change to the mod that should reach Kobos: tools/sign_mods.mjs reads it from here, and
+-- the site's deploy refuses a libpatches.so that changed under a version the site already has.
+update.VERSION = 10
 
 -- The public half of the key tools/sign_mods.mjs signs with.
 local UPDATE_KEY = "f65e1ff82241944b3e2a8ddb433be5a710835feaca53db3c5fc4afdd01d567b8"
@@ -38,7 +39,7 @@ function update.parse_manifest(text)
   for line in text:gmatch("[^\n]+") do
     local f = fields_of(line)
     if #f >= 4 and f[1] == "mod" and #f[2] == 128 and not manifest.mod then
-      manifest.mod = {hash = f[2], size = tonumber(f[3]), targets = f[4], version = tonumber(f[5] or "")}
+      manifest.mod = {hash = f[2], size = tonumber(f[3]), targets = f[4], version = tonumber(f[5] or ""), release = f[6] == "release"}
     elseif #f >= 4 and f[1] == "list" and #f[3] == 128 and not manifest.lists[f[2]] then
       manifest.lists[f[2]] = {hash = f[3], size = tonumber(f[4])}
     end
@@ -51,9 +52,12 @@ function update.matches(data, entry)
   return data ~= nil and entry ~= nil and #data == entry.size and nk.crypto.sha512(data) == entry.hash
 end
 
--- Whether the manifest's mod is a later version than this one.
+-- Whether the manifest's mod is a later version than this one. A dev build, made on a computer,
+-- is offered the release of its own version too, which is the way back to what the site has.
 function update.newer(mod)
-  return mod ~= nil and mod.version ~= nil and mod.version > update.VERSION
+  if mod == nil or mod.version == nil then return false end
+  if mod.version > update.VERSION then return true end
+  return nk.build ~= "release" and mod.release and mod.version == update.VERSION
 end
 
 -- Whether the signature, in hex, is UPDATE_KEY's on the manifest.
@@ -129,9 +133,11 @@ local function run(status, name, list_changed)
   for target in (mod and mod.targets or ""):gmatch("[^,]+") do ours = ours or target == name end
   if not ours or not update.newer(mod) then return result end
   say(result)
-  if not nk.confirm("Update Kobo Patcher?",
-      "A new version of Kobo Patcher is ready. Your Kobo will restart to install it, and your choices are kept.",
-      "Update", "Later") then
+  local question = "A new version of Kobo Patcher is ready. Your Kobo will restart to install it, and your choices are kept."
+  if mod.version == update.VERSION then
+    question = ("This Kobo has a dev build of Kobo Patcher. Install the site's release of version %d instead? Your Kobo will restart, and your choices are kept."):format(mod.version)
+  end
+  if not nk.confirm("Update Kobo Patcher?", question, "Update", "Later") then
     return "A new Kobo Patcher is ready whenever you want it."
   end
   say("Downloading Kobo Patcher...")

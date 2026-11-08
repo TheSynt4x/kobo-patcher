@@ -19,6 +19,10 @@ typedef void (*NkFn)(void *arg);
 /* Each mod defines this. It runs once, when Nickel loads the mod, before any UI exists. */
 void nk_mod_init(void);
 
+/* What this build is: "release" for the site's, or "dev", its commit (+ if it had changes not
+ * committed) and when, for one built on a computer. A dev build's More rows say DEV BUILD. */
+const char *nk_build(void);
+
 /* Log to stderr, prefixed with the mod's name. */
 void nk_log(const char *fmt, ...);
 

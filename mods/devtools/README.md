@@ -38,7 +38,11 @@ mods/tools/kobo log                  # what mods have written since the last tim
 mods/tools/kobo eval patches 'return nk.device.firmware()'
 mods/tools/kobo install patches      # a C++ or kit change: build, install, reboot, wait
 mods/tools/kobo undev patches        # back to the built-in scripts
+mods/tools/kobo status               # each mod: the site's release, or a DEV BUILD and which; dev switches left on
+mods/tools/kobo reset                # back to what the site gives: no update-url or pushed scripts, the site's Kobo Patcher
 ```
+
+`reset` leaves devtools, which it goes through, and mods the site has no release of.
 
 ## Switching it off
 

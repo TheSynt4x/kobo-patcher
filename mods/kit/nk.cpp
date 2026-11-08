@@ -47,6 +47,17 @@
 /* Outside imageformats, because Qt would still load libpatches.so.anything from in there. */
 #define DISABLED_AT "/usr/local/Kobo/" NK_NAME ".disabled"
 #define FAILSAFE_SECONDS 20
+#ifndef NK_BUILD
+#define NK_BUILD "dev"
+#endif
+
+/* What build.sh says this build is: "release", or "dev", its commit and when. It's in the .so as
+ * "nk-build: ..." too, for tools/kobo status to read. */
+static const char build_tag[] = "nk-build: " NK_BUILD;
+/* Read through a volatile, so the compiler can't work out what it says and drop the tag. */
+static const char *const volatile build_text = build_tag + sizeof "nk-build: " - 1;
+
+const char *nk_build(void) { return build_text; }
 
 /* ---- Nickel's own classes, declared with only what's used ----
  * Their objects are made with the size Nickel's own code allocates, never sizeof, since these
@@ -354,6 +365,7 @@ void kit_forget_rows(void) {
 }
 
 static void *italic_label_vptr[2];
+static QLabel *label(QWidget *parent, void *vptrs[2], const char *text);
 
 static int more_index(void *layout, const char *name) {
     QBoxLayout *box = static_cast<QBoxLayout *>(layout);
@@ -419,6 +431,14 @@ static void more_built(void *view, void *) {
         QObject *inner = find_class(row, "GenericContainerWidget");
         QObject *italic = inner ? find_class(inner, "RegularItalicLabel") : 0;
         if (italic && !italic_label_vptr[0]) take_vptrs(italic_label_vptr, italic);
+        /* A mod built on a computer says so at the end of its rows, as a value is shown on a
+         * settings row, so a dev build is never taken for a release. */
+        QBoxLayout *line = inner ? qobject_cast<QBoxLayout *>(static_cast<QWidget *>(inner)->layout()) : 0;
+        if (line && strcmp(nk_build(), "release") != 0) {
+            QLabel *dev = label(0, italic_label_vptr, "DEV BUILD");
+            dev->setStyleSheet(QStringLiteral("padding-right: 17px;"));
+            line->addWidget(dev, 0, 0);
+        }
     }
     nk_log("%d More rows added", rows.size());
 }
