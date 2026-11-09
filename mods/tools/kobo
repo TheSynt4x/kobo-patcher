@@ -345,14 +345,45 @@ def mods_on_kobo():
     return [(path, call("/file", path=path)[0]) for path in paths]
 
 
+_manifests = {}
+
+
+def own_manifest(data):
+    """The mod line at the address a mod gives nk.updates, which is built into its .so with its
+    main.lua, as (address, {hash, version}), or (address, None) if it can't be read, or (None, None)
+    for a mod without one."""
+    found = re.search(rb'url = "(https?://[^"\n]{1,200}/)"', data)
+    if not found:
+        return None, None
+    url = found.group(1).decode()
+    if url not in _manifests:
+        _manifests[url] = None
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url + "manifest.txt", headers={"User-Agent": "tools/kobo"}), timeout=20) as answer:
+                for line in answer.read().decode().splitlines():
+                    f = line.split("\t")
+                    if f[0] == "mod" and len(f) >= 5:
+                        _manifests[url] = {"hash": f[1], "version": f[4]}
+                        break
+        except (urllib.error.URLError, OSError):
+            pass
+    return url, _manifests[url]
+
+
 def describe_build(name, data, site):
-    """Whether a mod is the site's release, another release build, or a dev build, and which."""
+    """Whether a mod is the release at its own address (the site's, for Kobo Patcher), another
+    release build, or a dev build, and which."""
     found = re.search(rb"nk-build: ([^\0]*)", data)
     stamp = found.group(1).decode(errors="replace") if found else None
-    if site and name == "libpatches.so" and hashlib.sha512(data).hexdigest() == site["hash"]:
-        return f"release {site['version']}, the site's"
+    url, own = own_manifest(data)
+    if own is None and url is None and site and name == "libpatches.so":
+        own = site  # a Kobo Patcher from before nk.updates, which checks the site
+    if own and hashlib.sha512(data).hexdigest() == own["hash"]:
+        return f"release {own['version']}, the one at its address"
+    if stamp == "release" and own:
+        return f"release build, but not the one at its address, which has {own['version']}"
     if stamp == "release":
-        return "release build, but not the site's current one"
+        return "release build" + (", and its address couldn't be read" if url else "")
     if stamp:
         return f"DEV BUILD {stamp[4:]}".rstrip()
     return "built before builds were marked, so it can't say"
@@ -362,10 +393,24 @@ def status():
     model, firmware = kobo_model()
     print(f"{model} on {firmware}, at {config()['host']}\n")
     site = site_manifest()
-    for path, data in mods_on_kobo():
+    mods = mods_on_kobo()
+    # A mod's file is moved aside while its crash guard is on, for 20 seconds or so as Nickel starts
+    # or a screen opens, so one that's aside is only set aside if it still is a while later.
+    if any(path.endswith(".disabled") for path, _ in mods):
+        print("a crash guard is on, so looking again in 30 seconds...")
+        time.sleep(30)
+        mods = mods_on_kobo()
+    for path, data in mods:
         name = path.rsplit("/", 1)[1]
         aside = "  (set aside by its crash guard)" if path.endswith(".disabled") else ""
-        print(f"  {name:<22} {describe_build('lib' + name.replace('.disabled', '.so') if aside else name, data, site)}{aside}")
+        base = name.rsplit(".", 1)[0]
+        base = base[3:] if base.startswith("lib") else base
+        # In /usr/local/Kobo itself, which devtools doesn't list, so read with the shell.
+        out, _ = call("/sh", "POST", f"cat /usr/local/Kobo/{base}.probation 2>/dev/null; true".encode())
+        note = re.search(r"^\d+ (\d+) (\d+) (\d+)$", out.decode(errors="replace"), re.M)
+        if note:
+            aside += f"  (version {note[1]} is new, with {note[2]} to go back to for {note[3]} more clean starts)"
+        print(f"  {name:<22} {describe_build('lib' + name.replace('.disabled', '.so') if name.endswith('.disabled') else name, data, site)}{aside}")
     switches = []
     url = f"{ONBOARD}/.adds/patches/update-url"
     if exists(url):
