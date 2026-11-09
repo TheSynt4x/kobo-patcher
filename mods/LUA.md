@@ -147,7 +147,7 @@ Each returns false if this firmware isn't as expected. Calling `nk.books.languag
 
 A mod can update itself over Wi-Fi, from wherever its author puts it, the way Kobo Patcher does: on its own page, Check finds a newer version, asks, installs it and restarts the Kobo. It only checks when Check is tapped.
 
-- `nk.updates{url = , key = , name = }`: where this mod's updates come from. `url` is the folder holding them, `https://` or `http://`, and `key` the public half of the key that signs them, 64 hex digits. `name` is what the Kobo calls the mod, by default `nk.name`. Call it from `main.lua`: it only records them. The mod needs a `version` file.
+- `nk.updates{url = , key = , name = , files = , changed = }`: where this mod's updates come from. `url` is the folder holding them, `https://` or `http://`, and `key` the public half of the key that signs them, 64 hex digits. `name` is what the Kobo calls the mod, by default `nk.name`. `files` is other files the mod keeps up to date, such as Kobo Patcher's patch list: paths in its `.adds` folder, the same as where they are under `url`, or a function returning them, asked at each check. Check saves each one that has changed, once it matches the manifest, then runs `changed(paths)`, which returns what Check says. Call it from `main.lua`: it only records them. The mod needs a `version` file.
 - `nk.updates.add_to(page)`: a row on the mod's page with its version, and ", dev build" for one built on a computer, and Check. While a check runs, how it's going shows in the row's place. Returns the row's title.
 - `nk.updates.check(say)`: the same check, for a mod that shows it its own way. `say(text)` is told how it's going. From a callback.
 - `nk.version`: the mod's version, from its `version` file, or nil without one.
@@ -159,11 +159,11 @@ node tools/sign_mod.mjs --new-key ~/.config/my-mod/signing-key.pem    # once: pr
 node tools/sign_mod.mjs path/to/mymod out --key ~/.config/my-mod/signing-key.pem
 ```
 
-It writes `manifest.txt`, its signature `manifest.sig`, and `lib<mod>.so` into `out`, to put at `url`. The manifest gives the build's SHA-512 and size, its version, and the Kobos it's for, `--targets`, by default the firmware the kit has been tried on. A Kobo only takes a manifest signed with the mod's key and a build that matches it, which is why plain HTTP is tried when TLS doesn't work. It's only offered a version higher than its own, or, on a dev build, the release of its own version, as the way back to what's published. Keep the key's private half secret: anyone with it can sign an update every Kobo with the mod would take.
+It writes `manifest.txt`, its signature `manifest.sig`, and `lib<mod>.so` into `out`, to put at `url`. With `--files DIR`, every file under `DIR` goes in `out` at the same path, for `files`. The manifest gives the build's SHA-512 and size, its version, and the Kobos it's for, `--targets`, by default the firmware the kit has been tried on. A Kobo only takes a manifest signed with the mod's key and a build that matches it, which is why plain HTTP is tried when TLS doesn't work. It's only offered a version higher than its own, or, on a dev build, the release of its own version, as the way back to what's published. Keep the key's private half secret: anyone with it can sign an update every Kobo with the mod would take.
 
 To test, put another address, such as `http://192.168.1.10:8000/`, in `.adds/<mod>/update-url` on the Kobo. What's there still has to be signed with the mod's key.
 
-Kobo Patcher still checks with its own `patches/update.lua`, which reads the same `mod` line from the site's manifest.
+Kobo Patcher checks this way too, with its patch list as one of its `files`.
 
 ## Updating a mod and patching
 

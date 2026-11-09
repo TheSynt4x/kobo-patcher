@@ -12,15 +12,17 @@
 //
 //   kobo-patcher-manifest	1
 //   mod	<sha512>	<size>	<model-firmware,...>	<version>	<release or dev>     the Kobos the mod updates itself on
-//   list	<model-firmware>	<sha512>	<size>                    the patch list, in lists/
+//   file	lists/<model-firmware>.txt	<sha512>	<size>          a patch list, for nk.updates (Kobo Patcher 12 on)
+//   list	<model-firmware>	<sha512>	<size>                    the same, for Kobo Patchers before 12
 //
-// The version is update.VERSION in mods/patches/update.lua. A Kobo is only offered the mod when it's
+// The version is mods/patches/version, which build.sh builds in as nk.version. A Kobo is only offered the mod when it's
 // higher than its own, or when it's the same version and a release, and the Kobo has a dev build.
 // "release" or "dev" is what build.sh put in the .so, after "nk-build: ".
 //
 // manifest.sig is the manifest's Ed25519 signature, in hex. The key comes from the environment's
 // KOBO_PATCHER_SIGNING_KEY, or from ~/.config/kobo-patcher/signing-key.pem. Its public half has to
-// be the UPDATE_KEY built into the mod, or nothing is signed: Kobos would refuse it.
+// be the key Kobo Patcher gives nk.updates in mods/patches/main.lua, or nothing is signed: Kobos would
+// refuse it.
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -31,7 +33,8 @@ import { FIRMWARE } from "../web/patches/compiled.js";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MODS = join(ROOT, "web/mods");
 const KEY_FILE = join(homedir(), ".config/kobo-patcher/signing-key.pem");
-const SOURCE = join(ROOT, "mods/patches/update.lua");
+const SCRIPTS = join(ROOT, "mods/patches");
+const VERSION = join(SCRIPTS, "version");
 
 const rawPublicKey = (key) => createPublicKey(key).export({ format: "der", type: "spki" }).subarray(-32).toString("hex");
 
@@ -40,8 +43,8 @@ if (process.argv[2] === "--new-key") {
   const { privateKey } = generateKeyPairSync("ed25519");
   mkdirSync(dirname(KEY_FILE), { recursive: true });
   writeFileSync(KEY_FILE, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
-  console.log(`wrote ${KEY_FILE}. Keep it secret, and put its public half in ${SOURCE}:`);
-  console.log(`local UPDATE_KEY = "${rawPublicKey(privateKey)}"`);
+  console.log(`wrote ${KEY_FILE}. Keep it secret, and give its public half to nk.updates in ${SCRIPTS}/main.lua:`);
+  console.log(`key = "${rawPublicKey(privateKey)}"`);
   process.exit(0);
 }
 
@@ -53,10 +56,11 @@ if (!pem) {
   process.exit(0);
 }
 const key = createPrivateKey(pem);
-const expected = readFileSync(SOURCE, "utf8").match(/local UPDATE_KEY = "([0-9a-f]{64})"/)?.[1];
-if (rawPublicKey(key) !== expected) throw new Error(`the signing key doesn't match UPDATE_KEY in ${SOURCE}`);
-const version = readFileSync(SOURCE, "utf8").match(/^update\.VERSION = (\d+)$/m)?.[1];
-if (!version) throw new Error(`no update.VERSION in ${SOURCE}`);
+const scripts = readdirSync(SCRIPTS).filter((name) => name.endsWith(".lua")).map((name) => readFileSync(join(SCRIPTS, name), "utf8"));
+if (!scripts.some((text) => text.includes(`"${rawPublicKey(key)}"`)))
+  throw new Error(`the signing key's public half isn't the key Kobo Patcher gives nk.updates in ${SCRIPTS}`);
+const version = readFileSync(VERSION, "utf8").trim();
+if (!/^[1-9][0-9]*$/.test(version)) throw new Error(`${VERSION} should be a whole number, not '${version}'`);
 
 const describe = (path) => {
   const data = readFileSync(path);
@@ -76,16 +80,17 @@ if (process.argv.includes("--against")) {
   if (!answer.ok) throw new Error(`couldn't read ${url}: ${answer.status}`);
   const live = (await answer.text()).split("\n").map((line) => line.split("\t")).find((f) => f[0] === "mod");
   if (live && Number(live[4]) > Number(version))
-    throw new Error(`${url} has Kobo Patcher ${live[4]}, later than update.VERSION ${version}`);
+    throw new Error(`${url} has Kobo Patcher ${live[4]}, later than ${version} in ${VERSION}`);
   if (live && Number(live[4]) === Number(version) && live[1] !== hash)
-    throw new Error(`libpatches.so changed, but update.VERSION is still ${version}, as on ${url}: raise it in ${SOURCE}`);
+    throw new Error(`libpatches.so changed, but its version is still ${version}, as on ${url}: raise it in ${VERSION}`);
 }
 
 const targets = FIRMWARE.filter((build) => build.mod).map((build) => `${build.model}-${build.firmware}`);
 const lines = ["kobo-patcher-manifest\t1", ["mod", hash, size, targets.join(","), version, kind].join("\t")];
-for (const file of readdirSync(join(MODS, "lists")).filter((name) => name.endsWith(".txt")).sort())
-  lines.push(["list", file.slice(0, -4), ...describe(join(MODS, "lists", file))].join("\t"));
+const lists = readdirSync(join(MODS, "lists")).filter((name) => name.endsWith(".txt")).sort();
+for (const file of lists) lines.push(["file", `lists/${file}`, ...describe(join(MODS, "lists", file))].join("\t"));
+for (const file of lists) lines.push(["list", file.slice(0, -4), ...describe(join(MODS, "lists", file))].join("\t"));
 const manifest = Buffer.from(lines.join("\n") + "\n");
 writeFileSync(join(MODS, "manifest.txt"), manifest);
 writeFileSync(join(MODS, "manifest.sig"), sign(null, manifest, key).toString("hex") + "\n");
-console.log(`signed web/mods/manifest.txt: the mod (${stamp}) for ${targets.join(", ") || "no Kobo"}, and ${lines.length - 2} patch lists`);
+console.log(`signed web/mods/manifest.txt: the mod (${stamp}) for ${targets.join(", ") || "no Kobo"}, and ${lists.length} patch lists`);

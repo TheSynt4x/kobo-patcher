@@ -7,7 +7,6 @@
 -- them: the keyboards and My Books' filter from languages.lua. And "KOReader" on the More page,
 -- when KOReader is in .adds.
 local list = require "list"
-local update = require "update"
 local languages = require "languages"
 
 local CHOICES = "choices.txt"
@@ -337,14 +336,16 @@ local function build(page)
   page:section("THIS KOBO")
   page:value(firmware and firmware.name or model ~= "" and model or "Unknown model", version)
   if nk.build == "release" then
-    page:value("Kobo Patcher", tostring(update.VERSION))
+    page:value("Kobo Patcher", tostring(nk.version))
   else
-    page:value("Kobo Patcher", ("%d, dev build"):format(update.VERSION))
+    page:value("Kobo Patcher", ("%d, dev build"):format(nk.version))
     page:text(("Built on a computer, not the site's: %s. Check offers the site's release."):format(nk.build:sub(5)))
   end
   local status
   status = page:button("New patches and Kobo Patcher", "Check", function()
-    update.check(status, model, version, load_list)
+    nk.updates.check(function(text)
+      pcall(status.set, status, text) -- the screen may have closed
+    end)
   end)
   page:section("PATCHES")
   shown_summary = nil
@@ -365,6 +366,20 @@ if not state.started then
   read_choices()
   load_list()
 end
+
+-- Updates from the site, with Check: this firmware's patch list, saved in lists/ as on the site, and
+-- Kobo Patcher itself. Only what's signed with the key whose public half is here is taken, and the
+-- version is the one in the version file.
+nk.updates{
+  url = "https://kobo.thesynt4x.dev/mods/",
+  key = "f65e1ff82241944b3e2a8ddb433be5a710835feaca53db3c5fc4afdd01d567b8",
+  name = "Kobo Patcher",
+  files = function() return {list_path()} end,
+  changed = function()
+    load_list()
+    return "New patches are ready. Close Kobo Patcher and open it again to see them."
+  end,
+}
 
 -- Keyboards in your languages, a filter for them in My Books, and dictionaries by them.
 languages.start()

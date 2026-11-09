@@ -66,6 +66,27 @@ test("refuses a build without a stamp, and bad targets", () => {
   assert.match(run(mod("targets"), join(work, "x"), "--key", key, "--targets", "N306 4.38").stderr, /model-firmware/);
 });
 
+test("signs the files under --files, at the same paths", () => {
+  const files = join(work, "files");
+  mkdirSync(join(files, "lists"), { recursive: true });
+  writeFileSync(join(files, "lists", "N306-4.38.23852.txt"), "a list\n");
+  writeFileSync(join(files, "notes.txt"), "notes\n");
+  const out = join(work, "out-files");
+  const result = run(mod("withfiles"), out, "--key", key, "--targets", "N306-4.38.23852", "--files", files);
+  assert.equal(result.status, 0, result.stderr);
+  const lines = readFileSync(join(out, "manifest.txt"), "utf8").trim().split("\n").slice(2);
+  const sha512 = (text) => createHash("sha512").update(text).digest("hex");
+  assert.deepEqual(lines, [`file\tlists/N306-4.38.23852.txt\t${sha512("a list\n")}\t7`, `file\tnotes.txt\t${sha512("notes\n")}\t6`]);
+  assert.equal(readFileSync(join(out, "lists", "N306-4.38.23852.txt"), "utf8"), "a list\n");
+});
+
+test("refuses a file whose path a Kobo wouldn't keep", () => {
+  const files = join(work, "hidden");
+  mkdirSync(files, { recursive: true });
+  writeFileSync(join(files, ".secret"), "x");
+  assert.match(run(mod("hiddenfiles"), join(work, "x"), "--key", key, "--files", files).stderr, /can't be one of a mod's files/);
+});
+
 test("needs a key", () => {
   const result = spawnSync("node", [tool, mod("nokey"), join(work, "x")], { encoding: "utf8", env: { ...process.env, KOBO_MOD_SIGNING_KEY: "" } });
   assert.match(result.stderr, /no signing key/);

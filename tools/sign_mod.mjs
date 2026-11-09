@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Sign a mod's update for nk.updates: write the three files to put at the address the mod gives
-// nk.updates, manifest.txt, manifest.sig and lib<mod>.so.
+// Sign a mod's update for nk.updates: write what goes at the address the mod gives nk.updates,
+// manifest.txt, manifest.sig and lib<mod>.so, and the files the mod keeps up to date.
 //
-//   node tools/sign_mod.mjs FOLDER OUT [--key KEY.pem] [--targets MODEL-FIRMWARE,...]
+//   node tools/sign_mod.mjs FOLDER OUT [--key KEY.pem] [--targets MODEL-FIRMWARE,...] [--files DIR]
 //   node tools/sign_mod.mjs --new-key KEY.pem
 //
 // FOLDER is the mod's folder, built with mods/build.sh, so its build/lib<mod>.so is beside it.
@@ -10,18 +10,22 @@
 // Ed25519 key in PEM. Its public half has to be in one of the mod's scripts, as nk.updates' key, or
 // nothing is signed: Kobos would refuse it. --new-key makes one, once, and prints its public half.
 //
+// --files DIR puts every file under DIR at the same path in OUT, with a line of its own, so a mod
+// that names that path in nk.updates' files gets it saved at that path in its .adds folder.
+//
 // The manifest is, fields separated by tabs:
 //
 //   kobo-mod-manifest	1
 //   mod	<sha512>	<size>	<model-firmware,...>	<version>	<release or dev>
+//   file	<path>	<sha512>	<size>
 //
 // The version is FOLDER/version, which build.sh builds in as nk.version: a Kobo is only offered a
 // higher one than its own. Release or dev is what build.sh stamped the build. The targets are the
 // Kobos the mod updates itself on, where it has been tried: by default the firmware marked mod: true
 // in patches.yaml.
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { FIRMWARE } from "../web/patches/compiled.js";
 
@@ -33,7 +37,7 @@ const fail = (message) => {
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { key: { type: "string" }, targets: { type: "string" }, "new-key": { type: "string" } },
+  options: { key: { type: "string" }, targets: { type: "string" }, files: { type: "string" }, "new-key": { type: "string" } },
 });
 
 if (values["new-key"]) {
@@ -76,10 +80,28 @@ const release = stamp === "release";
 const targets = values.targets ?? FIRMWARE.filter((build) => build.mod).map((build) => `${build.model}-${build.firmware}`).join(",");
 if (!/^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$/.test(targets)) fail(`targets should be model-firmware, separated by commas, not '${targets}'`);
 
-const hash = createHash("sha512").update(data).digest("hex");
-const manifest = Buffer.from(`kobo-mod-manifest\t1\n${["mod", hash, data.length, targets, version, release ? "release" : "dev"].join("\t")}\n`);
+// Every file under a folder, as paths relative to it with /, in order.
+const walk = (root, folder = root) =>
+  readdirSync(folder).sort().flatMap((entry) => {
+    const path = join(folder, entry);
+    return statSync(path).isDirectory() ? walk(root, path) : [relative(root, path).split(sep).join("/")];
+  });
+const files = values.files ? walk(resolve(values.files)) : [];
+for (const path of files)
+  if (!/^[\w-][\w./-]*$/.test(path) || path.includes("..") || path.includes("//"))
+    fail(`${path} can't be one of a mod's files: letters, numbers, - _ . and /, and nothing hidden`);
+
+const sha512 = (bytes) => createHash("sha512").update(bytes).digest("hex");
+const lines = ["kobo-mod-manifest\t1", ["mod", sha512(data), data.length, targets, version, release ? "release" : "dev"].join("\t")];
 mkdirSync(out, { recursive: true });
+for (const path of files) {
+  const bytes = readFileSync(join(resolve(values.files), path));
+  lines.push(["file", path, sha512(bytes), bytes.length].join("\t"));
+  mkdirSync(dirname(join(out, path)), { recursive: true });
+  writeFileSync(join(out, path), bytes);
+}
+const manifest = Buffer.from(lines.join("\n") + "\n");
 copyFileSync(so, join(out, `lib${name}.so`));
 writeFileSync(join(out, "manifest.txt"), manifest);
 writeFileSync(join(out, "manifest.sig"), sign(null, manifest, key).toString("hex") + "\n");
-console.log(`signed ${name} ${version}, a ${release ? "release" : "dev build"}, for ${targets}, in ${out}`);
+console.log(`signed ${name} ${version}, a ${release ? "release" : "dev build"}, for ${targets}, ${files.length ? `with ${files.length} files, ` : ""}in ${out}`);

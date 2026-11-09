@@ -81,7 +81,7 @@ jobs:
           key: kit-vendor-${{ hashFiles('mods/kit/vendor.sh') }}
       # Kobo Patcher only takes updates signed with this key. It's an Ed25519 key in PEM. Only this
       # build is a release; any other says DEV BUILD on the Kobo. A changed libpatches.so needs a
-      # higher update.VERSION than the site's, so one version is always one build.
+      # higher version in mods/patches/version than the site's, so one version is always one build.
       - name: Build and sign the mods
         env:
           KOBO_PATCHER_SIGNING_KEY: ${{ secrets.KOBO_PATCHER_SIGNING_KEY }}
