@@ -1,6 +1,6 @@
 # Writing a mod in Lua
 
-A mod adds to Kobo's own screens, with Kobo's own widgets, from Lua scripts. The kit (`kit/`) does the work that has to happen inside Nickel, and gives the scripts the calls below. This page is the reference: every call, what it does, and what's been tried. `example/` is a small mod to start from, and `patches/` is Kobo Patcher, a larger one.
+A mod adds to Kobo's own screens, with Kobo's own widgets, from Lua scripts. The kit (`kit/`) does the work that has to happen inside Nickel, and gives the scripts the calls below. This page is the reference: every call, what it does, and what's been tried. `example/` is a showcase to copy from: a row on the More page and a tab, with a page for every kind of block, waiting and dialogs, the tools and the network, this Kobo, and what a mod can add to Kobo's own screens, each switched on there. `patches/` is Kobo Patcher, a mod that does a real job.
 
 ## A mod
 
