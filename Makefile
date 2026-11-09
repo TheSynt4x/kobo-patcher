@@ -19,6 +19,7 @@ add:
 
 test:
 	node --test tests/patcher.test.mjs
+	node --test tests/sign_mod.test.mjs
 	python3 tests/test_add_patch.py
 	python3 tests/test_pack.py
 

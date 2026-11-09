@@ -14,7 +14,7 @@ local update = {}
 -- never replaced by an older one, as one built from a branch would be by the site's. Raise it
 -- with each change to the mod that should reach Kobos: tools/sign_mods.mjs reads it from here, and
 -- the site's deploy refuses a libpatches.so that changed under a version the site already has.
-update.VERSION = 10
+update.VERSION = 11
 
 -- The public half of the key tools/sign_mods.mjs signs with.
 local UPDATE_KEY = "f65e1ff82241944b3e2a8ddb433be5a710835feaca53db3c5fc4afdd01d567b8"

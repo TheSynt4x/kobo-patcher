@@ -7,7 +7,9 @@
 # icons/*.png, which are built into the .so, with Lua, Monocypher and the kit's Lua side. Its gen_*.py run
 # first, from the folder above it, and write into build/. A plugin file names its Qt plugin class and key, 15 and 4
 # characters, so Qt loads it beside the other mods; without one it gets the kit's. A C++ mod's icons/<name>.png
-# are built in too, as icon_<name>[] and icon_<name>_size in <icons.inc>, for nk_more_row.
+# are built in too, as icon_<name>[] and icon_<name>_size in <icons.inc>, for nk_more_row. A version file
+# holds the mod's version, a whole number, which nk.updates offers newer ones by, and tools/sign_mod.mjs reads.
+# A Lua mod gets the kit's own scripts too, such as kit/updates.lua for nk.updates.
 #
 # The kit and a mod's .cpp files are built against Qt 5.2.1's headers (kit/qt-headers.sh fetches
 # them, and kit/vendor.sh fetches Lua and Monocypher), with no C++ library of their own: they use
@@ -50,12 +52,19 @@ if [ "$KOBO_RELEASE" = 1 ]; then
 else
   stamp="dev $(git -C "$folder" rev-parse --short HEAD 2>/dev/null || echo unknown)${changed:++} $(date '+%Y-%m-%d %H:%M')"
 fi
+version=
+if [ -f "$folder/version" ]; then
+  version="$(tr -d ' \r\n' < "$folder/version")"
+  case "$version" in
+  '' | *[!0-9]* | 0*) echo "$folder/version should be a whole number from 1, not '$version'" >&2; exit 1 ;;
+  esac
+fi
 
 flags="-target arm-linux-gnueabihf.2.17 -mcpu=cortex_a7 -Os -fvisibility=hidden -ffunction-sections -fdata-sections
   -fno-sanitize=all -fno-unwind-tables -fno-asynchronous-unwind-tables -g0 -fPIC"
 cxx() {
   zig c++ -c $flags -std=c++11 -fno-exceptions -frtti -fvisibility-inlines-hidden -Wno-gnu-inline-cpp-without-extern \
-    -DNK_NAME="\"$name\"" -DNK_BUILD="\"$stamp\"" -I"$out" -I"$kit" -I"$vendor" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" -I"$qt/QtSql" \
+    -DNK_NAME="\"$name\"" -DNK_BUILD="\"$stamp\"" ${version:+-DNK_VERSION=$version} -I"$out" -I"$kit" -I"$vendor" -I"$kit/qt" -I"$qt" -I"$qt/QtCore" -I"$qt/QtGui" -I"$qt/QtWidgets" -I"$qt/QtNetwork" -I"$qt/QtSql" \
     -o "$2" "$1"
 }
 objects=
@@ -87,12 +96,16 @@ if [ -f "$folder/main.lua" ]; then
   : > "$embedded"
   table=
   i=0
-  for file in "$folder"/*.lua "$folder"/icons/*.png; do
+  for file in "$folder"/*.lua "$folder"/icons/*.png "$kit"/*.lua; do
     [ -f "$file" ] || continue
+    case "$file" in
+    "$kit"/*) path="kit/${file#"$kit"/}" ;;
+    *) path="${file#"$folder"/}" ;;
+    esac
     printf 'static const unsigned char embedded_%d[] = {' "$i" >> "$embedded"
     od -An -v -tu1 "$file" | tr -s ' \n' ',' | sed 's/^,//' >> "$embedded"
     printf '0};\n' >> "$embedded"
-    table="$table  {\"${file#"$folder"/}\", embedded_$i, $(wc -c < "$file")},\n"
+    table="$table  {\"$path\", embedded_$i, $(wc -c < "$file")},\n"
     i=$((i + 1))
   done
   printf 'static const Embedded embedded[] = {\n%b};\n' "$table" >> "$embedded"

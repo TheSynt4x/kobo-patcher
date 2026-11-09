@@ -1044,6 +1044,25 @@ static int panic(lua_State *co) {
     return 0;
 }
 
+/* nk.<name>, from the kit's own kit/<name>.lua, which build.sh builds into every Lua mod. It only
+ * defines functions, so running it as the mod loads does nothing else. Always the built-in one,
+ * whatever the dev folder holds. */
+static void open_kit_script(const char *name) {
+    QByteArray path = QByteArray("kit/") + name + ".lua";
+    const Embedded *file = find_embedded(path.constData());
+    if (!file) return;
+    if (luaL_loadbuffer(L, reinterpret_cast<const char *>(file->data), file->size, ("@" + path).constData()) != LUA_OK ||
+        lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        nk_log("%s couldn't load: %s", path.constData(), lua_tostring(L, -1));
+        lua_pop(L, 1);
+        return;
+    }
+    lua_getglobal(L, "nk");
+    lua_insert(L, -2);
+    lua_setfield(L, -2, name);
+    lua_pop(L, 1);
+}
+
 extern "C" void nk_mod_init(void) {
     tasks = new QHash<lua_State *, int>;
     timers = new QHash<int, Timer *>;
@@ -1090,7 +1109,12 @@ extern "C" void nk_mod_init(void) {
     lua_setfield(L, -2, "name");
     lua_pushstring(L, nk_build());
     lua_setfield(L, -2, "build");
+#ifdef NK_VERSION
+    lua_pushinteger(L, NK_VERSION);
+    lua_setfield(L, -2, "version");
+#endif
     lua_setglobal(L, "nk");
+    open_kit_script("updates");
     lua_pushcfunction(L, l_require);
     lua_setglobal(L, "require");
     lua_pushcfunction(L, l_log);
