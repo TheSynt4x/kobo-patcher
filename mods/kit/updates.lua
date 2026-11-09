@@ -156,7 +156,8 @@ local function run(say)
     return ("Version %d didn't work on this Kobo. A newer one will come."):format(mod.version)
   end
   if not mod or not updates.for_this_kobo(mod) or not updates.newer(mod) then return result end
-  say(result)
+  -- What's new is said while the question about the build waits, but "up to date" isn't.
+  if #changed > 0 then say(result) end
 
   local question = ("Version %d of %s is ready. Your Kobo will restart to install it."):format(mod.version, name)
   if mod.version == nk.version then
