@@ -161,6 +161,8 @@ node tools/sign_mod.mjs path/to/mymod out --key ~/.config/my-mod/signing-key.pem
 
 It writes `manifest.txt`, its signature `manifest.sig`, and `lib<mod>.so` into `out`, to put at `url`. With `--files DIR`, every file under `DIR` goes in `out` at the same path, for `files`. The manifest gives the build's SHA-512 and size, its version, and the Kobos it's for, `--targets`, by default the firmware the kit has been tried on. A Kobo only takes a manifest signed with the mod's key and a build that matches it, which is why plain HTTP is tried when TLS doesn't work. It's only offered a version higher than its own, or, on a dev build, the release of its own version, as the way back to what's published. Keep the key's private half secret: anyone with it can sign an update every Kobo with the mod would take.
 
+If a new build crashes or freezes Nickel in its first 3 starts, as it starts or as one of its screens opens, the crash guard puts the build before it back instead of setting the mod aside (see "What keeps a Kobo safe" in README.md). Once Kobo's Home is up, a message says which version didn't start and which is back, the mod's Check row says it too, and that version, with any below it, isn't offered on that Kobo again: only a higher one is.
+
 To test, put another address, such as `http://192.168.1.10:8000/`, in `.adds/<mod>/update-url` on the Kobo. What's there still has to be signed with the mod's key.
 
 Kobo Patcher checks this way too, with its patch list as one of its `files`.

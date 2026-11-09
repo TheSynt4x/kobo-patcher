@@ -1049,15 +1049,18 @@ static int l_self_sha512(lua_State *co) {
     return 1;
 }
 
-/* nk.replace_self(data, sha512): installs data as the mod's new build, for when Nickel next starts,
- * if it has that hash. Returns whether it did. */
+/* nk.replace_self(data, sha512, version): installs data as the mod's new build, for when Nickel next
+ * starts, if it has that hash. The version, the new build's, goes on its probation (see nk.h).
+ * Returns whether it did. */
 static int l_replace_self(lua_State *co) {
     size_t size, hash_size;
     const char *data = luaL_checklstring(co, 1, &size), *expected = luaL_checklstring(co, 2, &hash_size);
+    int version = (int)luaL_optinteger(co, 3, 0);
     bool ok = false;
     {
         QByteArray hex = QCryptographicHash::hash(QByteArray::fromRawData(data, (int)size), QCryptographicHash::Sha512).toHex();
-        if (size && hash_size == 128 && hex == QByteArray(expected, (int)hash_size)) ok = nk_replace_self(data, (unsigned)size);
+        if (size && hash_size == 128 && hex == QByteArray(expected, (int)hash_size))
+            ok = nk_replace_self(data, (unsigned)size, version);
     }
     lua_pushboolean(co, ok);
     return 1;

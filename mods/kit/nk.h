@@ -91,8 +91,11 @@ void nk_error(const char *title, const char *text);
 const char *nk_self_path(void);
 
 /* Replace the mod's file with a new build, taking effect when Nickel next starts. The crash guard
- * is stopped first so it can't put the old file back. Returns 0 if nothing was changed. */
-int nk_replace_self(const void *data, unsigned size);
+ * is stopped first so it can't put the old file back. A mod with a version keeps the build that's
+ * running, and puts the new one, of that version, on probation: if the guard catches it crashing
+ * or freezing in its first few starts, the one before it comes back. Returns 0 if nothing was
+ * changed. */
+int nk_replace_self(const void *data, unsigned size, int version);
 
 /* Restart the Kobo the way Kobo does. */
 void nk_reboot(void);

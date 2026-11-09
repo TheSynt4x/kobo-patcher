@@ -22,6 +22,7 @@
 #include <QTimer>
 #include <QVariant>
 #include <QWidget>
+#include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -46,7 +47,17 @@
 #define UNINSTALL_FLAG "/mnt/onboard/.adds/" NK_NAME "/uninstall"
 /* Outside imageformats, because Qt would still load libpatches.so.anything from in there. */
 #define DISABLED_AT "/usr/local/Kobo/" NK_NAME ".disabled"
+/* After an update, the build before it, to go back to, and what's known about the new one. */
+#define PREVIOUS_AT "/usr/local/Kobo/" NK_NAME ".previous"
+#define PROBATION_AT "/usr/local/Kobo/" NK_NAME ".probation"
+#define SWAP_AT "/usr/local/Kobo/" NK_NAME ".swap"
+/* For the mod's scripts, after the build before an update came back: kit/updates.lua reads them. */
+#define NOTES_IN "/mnt/onboard/.adds/" NK_NAME
+#define ROLLED_BACK_NOTE NOTES_IN "/rolled-back"
+#define SKIP_NOTE NOTES_IN "/update-skip"
 #define FAILSAFE_SECONDS 20
+/* How many clean starts a new build needs before the one before it is let go. */
+#define PROBATION_STARTS 3
 #ifndef NK_BUILD
 #define NK_BUILD "dev"
 #endif
@@ -760,22 +771,168 @@ void nk_confirm(const char *title, const char *text, const char *accept, const c
 
 void nk_error(const char *title, const char *text) { ConfirmationDialogFactory::showErrorDialog(qstr(title), qstr(text)); }
 
-const char *nk_self_path(void) { return access(INSTALLED_AT, F_OK) == 0 ? INSTALLED_AT : DISABLED_AT; }
+/* ---- probation: a new build from nk_replace_self, and the one before it to go back to ----
+ *
+ * An update keeps the build it replaces as PREVIOUS_AT, and PROBATION_AT says which build is new:
+ * its inode, which renames and links keep and a reinstall from the site's page doesn't, its version,
+ * the version before it, and how many clean starts it still needs. Until it has had them, the crash
+ * guard puts the build before it where Qt loads from whenever it's on, so a crash or freeze then
+ * means the build before it starts next time, with nothing to run after the crash. That build,
+ * starting, sees itself where the new one was, and leaves notes in the mod's .adds folder: which
+ * version didn't start, for a message, and not to offer it again. */
+struct Probation {
+    unsigned long inode;
+    int version, previous, starts;
+};
+static Probation probation;
+static bool on_probation; /* this is the new build, with the one before it to go back to */
+static bool armed;        /* the guard is on, so this build is at DISABLED_AT */
+
+static unsigned long inode_of(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 ? (unsigned long)st.st_ino : 0;
+}
+
+static bool read_probation(Probation *p) {
+    FILE *file = fopen(PROBATION_AT, "r");
+    if (!file) return false;
+    int read = fscanf(file, "%lu %d %d %d", &p->inode, &p->version, &p->previous, &p->starts);
+    fclose(file);
+    return read == 4 && p->inode;
+}
+
+/* Written whole beside it and renamed over it, so a lost write leaves the last one. */
+static bool write_probation(const Probation &p) {
+    FILE *file = fopen(PROBATION_AT ".new", "w");
+    if (!file) return false;
+    bool ok = fprintf(file, "%lu %d %d %d\n", p.inode, p.version, p.previous, p.starts) > 0;
+    ok = !fflush(file) && !fsync(fileno(file)) && ok;
+    fclose(file);
+    if (ok && !rename(PROBATION_AT ".new", PROBATION_AT)) return true;
+    unlink(PROBATION_AT ".new");
+    return false;
+}
+
+static void end_probation(void) {
+    on_probation = false;
+    unlink(PREVIOUS_AT);
+    unlink(PROBATION_AT);
+    unlink(SWAP_AT);
+}
+
+static void write_note(const char *path, const char *text) {
+    mkdir(NOTES_IN, 0755);
+    FILE *file = fopen(path, "w");
+    if (!file) return;
+    fputs(text, file);
+    fflush(file);
+    fsync(fileno(file));
+    fclose(file);
+}
+
+/* As the mod loads, before the guard: whether this is a new build on probation, the build before
+ * one that didn't start, or neither, when a note left by an older install is let go. */
+static void check_probation(void) {
+    if (access(PROBATION_AT, F_OK) != 0) return;
+    Probation p;
+    unsigned long installed = inode_of(INSTALLED_AT);
+    if (!read_probation(&p)) {
+        nk_log("the probation note can't be read, so the build before this one is let go");
+    } else if (installed && installed == p.inode) {
+        probation = p;
+        on_probation = true;
+        nk_log("version %d is new, with version %d to go back to until it has started cleanly %d more times", p.version, p.previous, p.starts);
+        return;
+    } else if (installed && installed == inode_of(PREVIOUS_AT)) {
+        int skip = p.version;
+        FILE *file = fopen(SKIP_NOTE, "r");
+        if (file) {
+            int before;
+            if (fscanf(file, "%d", &before) == 1 && before > skip) skip = before;
+            fclose(file);
+        }
+        char text[64];
+        snprintf(text, sizeof text, "%d\n", skip);
+        write_note(SKIP_NOTE, text);
+        snprintf(text, sizeof text, "%d %d\n", p.version, p.previous);
+        write_note(ROLLED_BACK_NOTE, text);
+        unlink(DISABLED_AT);
+        nk_log("version %d didn't start cleanly, so version %d is back, and %d won't be offered again", p.version, p.previous, p.version);
+    } else {
+        nk_log("this isn't the build that was on probation, so the note and the build before it are let go");
+    }
+    end_probation();
+    sync();
+}
+
+/* Whether another installed mod has a new build on probation. Every mod starts within the same few
+ * seconds, so a crash then would set aside every mod whose guard is on. While another mod's new build
+ * is on trial, a crash as Nickel starts is taken for that build's, and its guard puts the build before
+ * it back, so this one leaves its own startup guard off. A note whose mod isn't installed any more
+ * doesn't count, or it would leave the guard off for good. */
+static bool another_on_probation(void) {
+    DIR *folder = opendir("/usr/local/Kobo");
+    if (!folder) return false;
+    bool found = false;
+    while (struct dirent *entry = readdir(folder)) {
+        const char *name = entry->d_name;
+        size_t length = strlen(name), suffix = sizeof ".probation" - 1;
+        if (length <= suffix || strcmp(name + length - suffix, ".probation")) continue;
+        char mod[256], path[320];
+        snprintf(mod, sizeof mod, "%.*s", (int)(length - suffix), name);
+        if (!strcmp(mod, NK_NAME)) continue;
+        snprintf(path, sizeof path, "/usr/local/Kobo/imageformats/lib%s.so", mod);
+        bool installed = access(path, F_OK) == 0;
+        snprintf(path, sizeof path, "/usr/local/Kobo/%s.disabled", mod);
+        if (installed || access(path, F_OK) == 0) {
+            nk_log("%s has a new build on probation, so a crash as Nickel starts is taken for its, and this mod's startup guard stays off", mod);
+            found = true;
+            break;
+        }
+    }
+    closedir(folder);
+    return found;
+}
+
+/* Where the mod's file is now: aside while the crash guard is on, and back afterwards. */
+const char *nk_self_path(void) {
+    if (armed && access(DISABLED_AT, F_OK) == 0) return DISABLED_AT;
+    return access(INSTALLED_AT, F_OK) == 0 ? INSTALLED_AT : DISABLED_AT;
+}
 
 /* Written beside the old file and renamed over it, so a lost write leaves the old one. Nickel keeps
- * running the old copy it already loaded. */
-int nk_replace_self(const void *data, unsigned size) {
+ * running the old copy it already loaded. A mod with a version keeps the build that's running as
+ * the one to go back to, linked as PREVIOUS_AT before the new one is renamed in, and the new one
+ * goes on probation. */
+int nk_replace_self(const void *data, unsigned size, int version) {
     failsafe_stop();
     int fd = open(INSTALLED_AT ".new", O_WRONLY | O_CREAT | O_TRUNC, 0755);
     if (fd < 0) return 0;
     int ok = write(fd, data, size) == (ssize_t)size;
     ok = !fsync(fd) && ok;
     close(fd);
-    if (!ok || rename(INSTALLED_AT ".new", INSTALLED_AT)) {
+    if (!ok) {
         unlink(INSTALLED_AT ".new");
         return 0;
     }
+    bool keep = false;
+#ifdef NK_VERSION
+    end_probation();
+    keep = link(INSTALLED_AT, PREVIOUS_AT) == 0;
+#else
+    (void)version;
+#endif
+    if (rename(INSTALLED_AT ".new", INSTALLED_AT)) {
+        unlink(INSTALLED_AT ".new");
+        if (keep) unlink(PREVIOUS_AT);
+        return 0;
+    }
     unlink(DISABLED_AT);
+#ifdef NK_VERSION
+    Probation p = {inode_of(INSTALLED_AT), version, NK_VERSION, PROBATION_STARTS};
+    if (keep && !write_probation(p)) unlink(PREVIOUS_AT);
+    if (keep) nk_log("version %d keeps version %d to go back to, until it has started cleanly %d times", version, NK_VERSION, PROBATION_STARTS);
+#endif
     sync();
     nk_log("replaced with a new build");
     return 1;
@@ -928,8 +1085,47 @@ extern "C" __attribute__((visibility("default"))) void *qt_plugin_instance(void)
  * guard is on, Nickel is frozen, and the guard's thread stops it, as a crash would, so the Kobo starts
  * again without the mod and nobody has to hold the power off. Each move is synced, because a frozen
  * Kobo gets held off, and an unsynced move can be lost with the power. */
-static void failsafe_arm(void) { rename(INSTALLED_AT, DISABLED_AT); sync(); }
-static void failsafe_clear(void) { rename(DISABLED_AT, INSTALLED_AT); sync(); }
+static void failsafe_arm(void) {
+    /* A screen's guard and a timed one can both be asked for at once. Moving the files a second time
+     * would take the build before this one for this one. */
+    if (armed) return;
+    armed = true;
+    /* On probation, the new build is linked aside and the one before it renamed in over it, so
+     * lib<mod>.so is always a whole build on disk, whenever the power goes. */
+    if (on_probation) {
+        unlink(DISABLED_AT);
+        unlink(SWAP_AT);
+        if (link(INSTALLED_AT, DISABLED_AT) == 0 && link(PREVIOUS_AT, SWAP_AT) == 0 && rename(SWAP_AT, INSTALLED_AT) == 0) {
+            sync();
+            return;
+        }
+        nk_log("the build before this one couldn't be put in its place, so the guard sets this one aside as usual");
+        unlink(SWAP_AT);
+        unlink(DISABLED_AT); /* rename() does nothing between two links to the same file */
+    }
+    rename(INSTALLED_AT, DISABLED_AT);
+    sync();
+}
+static void failsafe_clear(void) {
+    armed = false;
+    rename(DISABLED_AT, INSTALLED_AT);
+    sync();
+}
+
+/* The guard cleared after Nickel started with this build: one more clean start for a new build. */
+static bool startup_pending;
+static void count_clean_start(void) {
+    if (!startup_pending) return;
+    startup_pending = false;
+    if (!on_probation) return;
+    if (--probation.starts > 0) {
+        if (!write_probation(probation)) nk_log("the probation note couldn't be saved");
+        return;
+    }
+    end_probation();
+    sync();
+    nk_log("version %d has started cleanly %d times, so version %d is let go", probation.version, PROBATION_STARTS, probation.previous);
+}
 
 static pthread_mutex_t failsafe_lock = PTHREAD_MUTEX_INITIALIZER;
 static long failsafe_until; /* while this is set, a thread clears the guard once it's passed */
@@ -952,6 +1148,7 @@ static void *failsafe_wait(void *) {
         if (left <= 0 && __atomic_load_n(&alive_at, __ATOMIC_ACQUIRE) >= failsafe_until) {
             failsafe_until = 0;
             failsafe_clear();
+            count_clean_start();
             pthread_mutex_unlock(&failsafe_lock);
             nk_log("failsafe cleared");
             return 0;
@@ -1025,6 +1222,7 @@ __attribute__((constructor)) static void load(void) {
     if (access(UNINSTALL_FLAG, F_OK) == 0) {
         unlink(INSTALLED_AT);
         unlink(DISABLED_AT);
+        end_probation();
         unlink(UNINSTALL_FLAG);
         nk_log("uninstalled");
         return;
@@ -1033,7 +1231,9 @@ __attribute__((constructor)) static void load(void) {
         nk_log("this firmware is missing something, so the mod does nothing");
         return;
     }
-    nk_failsafe(FAILSAFE_SECONDS);
+    check_probation();
+    startup_pending = true;
+    if (on_probation || !another_on_probation()) nk_failsafe(FAILSAFE_SECONDS);
     atexit(failsafe_stop);
     start_heartbeat();
     nk_log("loaded");
