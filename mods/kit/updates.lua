@@ -20,6 +20,9 @@ local updates = {}
 -- For testing: a file in the mod's .adds folder with another address, like
 -- http://192.168.1.10:8765/. What's there still has to be signed.
 local URL_FILE = "update-url"
+-- Left by the crash guard (kit/nk.cpp) when a new build didn't start cleanly and the one before it
+-- came back: the version not to offer again, and, until it's been said, which version went back.
+local SKIP_FILE, ROLLED_BACK_FILE = "update-skip", "rolled-back"
 
 local source -- {url = , key = , name = , files = , changed = }, from nk.updates{...}
 local busy = false
@@ -67,9 +70,22 @@ end
 -- Whether the manifest's mod is a later version than this one. A dev build, made on a computer,
 -- is offered the release of its own version too, which is the way back to what's published.
 function updates.newer(mod)
-  if mod == nil or mod.version == nil then return false end
+  if mod == nil or mod.version == nil or updates.skipped(mod.version) then return false end
   if mod.version > nk.version then return true end
   return nk.build ~= "release" and mod.release and mod.version == nk.version
+end
+
+-- The highest version that didn't start cleanly on this Kobo, or nil.
+function updates.skip()
+  local text = nk.file.read(SKIP_FILE)
+  return text and tonumber(text:match("%d+"))
+end
+
+-- Whether a later version than this one didn't start cleanly here, so it, and any before it, isn't
+-- offered again.
+function updates.skipped(version)
+  local skip = updates.skip()
+  return skip ~= nil and version > nk.version and version <= skip
 end
 
 local function base_url()
@@ -136,6 +152,9 @@ local function run(say)
   end
 
   local mod = manifest.mod
+  if mod and updates.for_this_kobo(mod) and mod.version and updates.skipped(mod.version) and #changed == 0 then
+    return ("Version %d didn't work on this Kobo. A newer one will come."):format(mod.version)
+  end
   if not mod or not updates.for_this_kobo(mod) or not updates.newer(mod) then return result end
   say(result)
 
@@ -150,7 +169,7 @@ local function run(say)
   local data = get("lib" .. nk.name .. ".so")
   if not data then return ("The new %s couldn't be downloaded. Try again later."):format(name) end
   if not updates.matches(data, mod) then return "The download didn't match what was expected, so it wasn't used." end
-  if not nk.replace_self(data, mod.hash) then return ("The new %s couldn't be installed. Nothing was changed."):format(name) end
+  if not nk.replace_self(data, mod.hash, mod.version) then return ("The new %s couldn't be installed. Nothing was changed."):format(name) end
   return "Restarting to finish the update.", true
 end
 
@@ -173,6 +192,8 @@ end
 function updates.add_to(page)
   local title = ("Version %d"):format(nk.version)
   if nk.build ~= "release" then title = title .. ", dev build" end
+  local skip = updates.skip()
+  if skip and skip > nk.version then title = ("%s. Version %d didn't work on this Kobo"):format(title, skip) end
   local status
   status = page:button(title, "Check", function()
     updates.check(function(text)
@@ -180,6 +201,23 @@ function updates.add_to(page)
     end)
   end)
   return status
+end
+
+-- Once, after the build before an update came back: a message as soon as Kobo's Home is built, so
+-- whoever has the Kobo knows, and can say which version broke. Kobo is running by then, so it never
+-- shows while the mod loads. Without Home's class on this firmware, half a minute after the mod starts.
+local told = false
+local function tell_rolled_back()
+  local text = not told and nk.file.read(ROLLED_BACK_FILE)
+  local failed, back = (text or ""):match("(%d+)%s+(%d+)")
+  if not failed then return end
+  told = true
+  local function tell()
+    if not nk.file.exists(ROLLED_BACK_FILE) then return end
+    nk.file.remove(ROLLED_BACK_FILE)
+    nk.toast(source.name, ("Version %s didn't start on this Kobo, so version %s is back."):format(failed, back), 8000)
+  end
+  if not nk.on_screen("HomePageView", function() nk.after(1500, tell) end) then nk.after(30000, tell) end
 end
 
 -- nk.updates{url = , key = , name = , files = , changed = }: where this mod's updates come from.
@@ -205,6 +243,7 @@ setmetatable(updates, {__call = function(_, options)
   end
   if options.changed ~= nil and type(options.changed) ~= "function" then error("nk.updates' changed is a function", 2) end
   source = {url = options.url, key = options.key:lower(), name = options.name or nk.name, files = files, changed = options.changed}
+  tell_rolled_back()
 end})
 
 return updates
