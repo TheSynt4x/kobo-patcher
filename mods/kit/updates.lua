@@ -5,20 +5,23 @@
 -- from the mod's key, and the new build has to match the SHA-512 and size the manifest gives it.
 -- That's why plain HTTP is tried when TLS doesn't work.
 --
--- tools/sign_mod.mjs writes the three files to put at the mod's address: manifest.txt,
--- manifest.sig, and lib<mod>.so. The manifest is, fields separated by tabs:
+-- tools/sign_mod.mjs writes what goes at the mod's address: manifest.txt, manifest.sig,
+-- lib<mod>.so, and any other files the mod keeps up to date, such as Kobo Patcher's patch lists.
+-- The manifest is, fields separated by tabs:
 --
 --   kobo-mod-manifest	1
 --   mod	<sha512>	<size>	<model-firmware,...>	<version>	<release or dev>
+--   file	<path>	<sha512>	<size>
 --
--- which is the same mod line as Kobo Patcher's manifest, so its manifest reads this way too.
+-- Lines of other kinds are left alone, so a manifest can carry more for older mods, as the site's
+-- carries list lines for Kobo Patchers before 12.
 local updates = {}
 
 -- For testing: a file in the mod's .adds folder with another address, like
 -- http://192.168.1.10:8765/. What's there still has to be signed.
 local URL_FILE = "update-url"
 
-local source -- {url = , key = , name = }, from nk.updates{...}
+local source -- {url = , key = , name = , files = , changed = }, from nk.updates{...}
 local busy = false
 
 local function fields_of(line)
@@ -27,15 +30,24 @@ local function fields_of(line)
   return fields
 end
 
--- The manifest's mod, {hash, size, targets, version, release}, or nil. The first mod line counts,
--- and lines that can't be read are left out.
+-- {mod = {hash, size, targets, version, release}, files = {[path] = {hash, size}}}. The first line
+-- of each counts, and lines that can't be read are left out.
 function updates.parse(text)
+  local manifest = {files = {}}
   for line in text:gmatch("[^\n]+") do
     local f = fields_of(line)
-    if #f >= 5 and f[1] == "mod" and #f[2] == 128 then
-      return {hash = f[2], size = tonumber(f[3]), targets = f[4], version = tonumber(f[5]), release = f[6] == "release"}
+    if #f >= 5 and f[1] == "mod" and #f[2] == 128 and not manifest.mod then
+      manifest.mod = {hash = f[2], size = tonumber(f[3]), targets = f[4], version = tonumber(f[5]), release = f[6] == "release"}
+    elseif #f >= 4 and f[1] == "file" and #f[3] == 128 and not manifest.files[f[2]] then
+      manifest.files[f[2]] = {hash = f[3], size = tonumber(f[4])}
     end
   end
+  return manifest
+end
+
+-- Whether a path can be one of the mod's files: relative, under its .adds folder, nothing hidden.
+local function safe_path(path)
+  return type(path) == "string" and path:find("^[%w_-][%w_./-]*$") ~= nil and not path:find("%.%.") and not path:find("//")
 end
 
 -- Whether data is the file the manifest describes.
@@ -102,10 +114,30 @@ local function run(say)
   if not nk.crypto.ed25519_verify(signature:sub(1, 128), source.key, text) then
     return "The update didn't check out, so it wasn't used."
   end
-  local mod = updates.parse(text)
-  if not mod or not updates.for_this_kobo(mod) or not updates.newer(mod) then
-    return ("%s is up to date."):format(name)
+  local manifest = updates.parse(text)
+
+  -- The mod's files first, each saved where it's kept on the mod's address, once it matches.
+  local result, changed = ("%s is up to date."):format(name), {}
+  for _, path in ipairs(source.files and source.files() or {}) do
+    local entry = manifest.files[path]
+    if safe_path(path) and entry and not updates.matches(nk.file.read(path), entry) then
+      say("Downloading what's new...")
+      local data = get(path)
+      if not data then return "What's new couldn't be downloaded. Try again later." end
+      if not updates.matches(data, entry) then return "The download didn't match what was expected, so it wasn't used." end
+      local folder = path:match("^(.*)/[^/]*$")
+      if folder then nk.file.mkdir(folder) end
+      if not nk.file.write(path, data) then return "What's new couldn't be saved. Check there's free space." end
+      changed[#changed + 1] = path
+    end
   end
+  if #changed > 0 then
+    result = source.changed and source.changed(changed) or ("%s has what's new."):format(name)
+  end
+
+  local mod = manifest.mod
+  if not mod or not updates.for_this_kobo(mod) or not updates.newer(mod) then return result end
+  say(result)
 
   local question = ("Version %d of %s is ready. Your Kobo will restart to install it."):format(mod.version, name)
   if mod.version == nk.version then
@@ -150,8 +182,10 @@ function updates.add_to(page)
   return status
 end
 
--- nk.updates{url = , key = , name = }: where this mod's updates come from. Only records it, so it
--- can be called from main.lua's top level.
+-- nk.updates{url = , key = , name = , files = , changed = }: where this mod's updates come from.
+-- files is a list of paths, or a function returning one, asked at each check; changed(paths) runs
+-- after any of them is saved, and returns what Check says. Only records it all, so it can be
+-- called from main.lua's top level.
 setmetatable(updates, {__call = function(_, options)
   if type(options) ~= "table" then error("nk.updates takes a table: {url = , key = }", 2) end
   if not nk.version then error("nk.updates needs the mod's version, in a file named version in its folder", 2) end
@@ -159,7 +193,18 @@ setmetatable(updates, {__call = function(_, options)
   if type(options.key) ~= "string" or not options.key:find("^%x+$") or #options.key ~= 64 then
     error("nk.updates needs a key: the public half of the signing key, 64 hex digits", 2)
   end
-  source = {url = options.url, key = options.key:lower(), name = options.name or nk.name}
+  local files = options.files
+  if type(files) == "table" then
+    for _, path in ipairs(files) do
+      if not safe_path(path) then error(("nk.updates can't keep %s: a file's path is relative, under the mod's folder"):format(tostring(path)), 2) end
+    end
+    local list = files
+    files = function() return list end
+  elseif files ~= nil and type(files) ~= "function" then
+    error("nk.updates' files is a list of paths, or a function returning one", 2)
+  end
+  if options.changed ~= nil and type(options.changed) ~= "function" then error("nk.updates' changed is a function", 2) end
+  source = {url = options.url, key = options.key:lower(), name = options.name or nk.name, files = files, changed = options.changed}
 end})
 
 return updates
